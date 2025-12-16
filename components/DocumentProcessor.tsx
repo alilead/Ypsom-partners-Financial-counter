@@ -251,16 +251,16 @@ export const DocumentProcessor: React.FC = () => {
             />
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Classification by Issuer Table */}
-            <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
+            <div className="lg:col-span-1 bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden h-fit">
                 <div className="px-6 py-4 border-b border-ypsom-alice bg-gray-50 flex items-center justify-between">
                     <div className="flex items-center">
                         <PieChart className="w-4 h-4 mr-2 text-ypsom-deep" />
                         <h3 className="font-bold text-ypsom-deep text-sm">Expenses by Issuer</h3>
                     </div>
                 </div>
-                <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                <div className="overflow-x-auto max-h-96 overflow-y-auto">
                     <table className="min-w-full divide-y divide-ypsom-alice text-xs">
                         <thead className="bg-ypsom-alice/30">
                             <tr>
@@ -283,27 +283,62 @@ export const DocumentProcessor: React.FC = () => {
                     </table>
                 </div>
             </div>
+            {/* Spacer for layout if needed, or allow the bottom table to be the main focus */}
+            <div className="lg:col-span-2 flex items-center justify-center p-6 border-2 border-dashed border-ypsom-alice/50 rounded-sm bg-gray-50/50">
+               <p className="text-ypsom-slate/50 text-sm font-medium">Select a transaction below to view details or generate a report.</p>
+            </div>
+          </div>
 
-            {/* Detailed Document Table (Consolidated) */}
-            <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
-                <div className="px-6 py-4 border-b border-ypsom-alice bg-gray-50">
-                    <h3 className="font-bold text-ypsom-deep text-sm">Recent Transactions</h3>
+          {/* Comprehensive Financial Ledger Table (Full Width) */}
+          <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
+                <div className="px-6 py-4 border-b border-ypsom-alice bg-gray-50 flex justify-between items-center">
+                    <h3 className="font-bold text-ypsom-deep text-sm">Full Financial Ledger</h3>
+                    <span className="text-xs text-ypsom-slate font-medium bg-ypsom-alice/30 px-2 py-1 rounded-full">
+                        Showing all {completedDocs.length} records
+                    </span>
                 </div>
-                <div className="overflow-x-auto max-h-80 overflow-y-auto">
+                <div className="overflow-x-auto">
                     <table className="min-w-full divide-y divide-ypsom-alice text-xs">
                         <thead className="bg-ypsom-alice/30">
                             <tr>
                                 <th className="px-4 py-3 text-left font-bold text-ypsom-deep uppercase tracking-wider">Date</th>
+                                <th className="px-4 py-3 text-left font-bold text-ypsom-deep uppercase tracking-wider">Type</th>
                                 <th className="px-4 py-3 text-left font-bold text-ypsom-deep uppercase tracking-wider">Issuer</th>
-                                <th className="px-4 py-3 text-right font-bold text-ypsom-deep uppercase tracking-wider">Amount (CHF)</th>
+                                <th className="px-4 py-3 text-left font-bold text-ypsom-deep uppercase tracking-wider">Doc No.</th>
+                                <th className="px-4 py-3 text-right font-bold text-ypsom-deep uppercase tracking-wider">Net (Orig)</th>
+                                <th className="px-4 py-3 text-right font-bold text-ypsom-deep uppercase tracking-wider">VAT (Orig)</th>
+                                <th className="px-4 py-3 text-right font-bold text-ypsom-deep uppercase tracking-wider">Total (Orig)</th>
+                                <th className="px-4 py-3 text-center font-bold text-ypsom-deep uppercase tracking-wider">Curr</th>
+                                <th className="px-4 py-3 text-right font-bold text-ypsom-deep uppercase tracking-wider bg-ypsom-alice/20">Total (CHF)</th>
                             </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-ypsom-alice">
-                            {completedDocs.slice(0, 10).map((doc) => (
+                            {completedDocs.map((doc) => (
                                 <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
                                     <td className="px-4 py-3 whitespace-nowrap text-ypsom-slate">{doc.data?.date}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap text-ypsom-shadow font-medium truncate max-w-[120px]">{doc.data?.issuer}</td>
-                                    <td className="px-4 py-3 whitespace-nowrap text-right text-ypsom-deep font-mono">
+                                    <td className="px-4 py-3 whitespace-nowrap text-ypsom-slate">
+                                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-medium
+                                            ${doc.data?.documentType === DocumentType.INVOICE ? 'bg-blue-100 text-blue-800' : 
+                                              doc.data?.documentType === DocumentType.RECEIPT ? 'bg-yellow-100 text-yellow-800' : 
+                                              'bg-green-100 text-green-800'}`}>
+                                            {doc.data?.documentType}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-ypsom-shadow font-medium">{doc.data?.issuer}</td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-ypsom-slate">{doc.data?.documentNumber}</td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right text-ypsom-slate font-mono">
+                                        {doc.data?.netAmount ? doc.data.netAmount.toFixed(2) : '-'}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right text-ypsom-slate font-mono">
+                                        {doc.data?.vatAmount ? doc.data.vatAmount.toFixed(2) : '-'}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right text-ypsom-shadow font-bold font-mono">
+                                        {doc.data?.totalAmount?.toFixed(2)}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-center text-ypsom-slate">
+                                        {doc.data?.originalCurrency}
+                                    </td>
+                                    <td className="px-4 py-3 whitespace-nowrap text-right text-ypsom-deep font-bold font-mono bg-ypsom-alice/10">
                                         {doc.data?.amountInCHF.toFixed(2)}
                                     </td>
                                 </tr>
@@ -311,7 +346,6 @@ export const DocumentProcessor: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
-            </div>
           </div>
         </div>
       )}

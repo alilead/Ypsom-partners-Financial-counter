@@ -1,5 +1,6 @@
 import React from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
+import { LayoutDashboard } from 'lucide-react';
 
 function App() {
   return (
@@ -33,14 +34,19 @@ function App() {
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         <div className="mb-8 border-b border-ypsom-alice pb-4">
-           <h1 className="text-2xl font-bold text-ypsom-deep">Financial Operations Dashboard</h1>
-           <p className="text-sm text-ypsom-slate mt-1">
+           <div className="flex items-center gap-3 mb-2">
+             <div className="p-2 bg-ypsom-deep/5 rounded-sm text-ypsom-deep">
+                <LayoutDashboard className="w-6 h-6" />
+             </div>
+             <h1 className="text-2xl font-bold text-ypsom-deep">Financial Operations Dashboard</h1>
+           </div>
+           <p className="text-sm text-ypsom-slate ml-1">
              AI-powered document classification, expense categorization, and currency standardization.
            </p>
         </div>
 
-        {/* Full width container since utility column was removed */}
-        <div className="w-full">
+        {/* Content Area */}
+        <div className="w-full min-h-[500px] animate-in fade-in duration-300">
             <DocumentProcessor />
         </div>
 

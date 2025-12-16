@@ -59,9 +59,9 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
   };
 
   try {
-    // 60 second timeout protection
+    // 90 second timeout protection
     const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error("Analysis timed out after 60 seconds")), 60000);
+      setTimeout(() => reject(new Error("Analysis timed out after 90 seconds")), 90000);
     });
 
     const apiCall = ai.models.generateContent({
