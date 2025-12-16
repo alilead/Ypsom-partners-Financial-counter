@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { Upload, FileText, CheckCircle, XCircle, Loader2, Download, RefreshCcw, Briefcase, FileDigit, Receipt, Landmark, PieChart } from 'lucide-react';
-import { analyzeFinancialDocument } from '../services/geminiService';
+import React, { useState, useRef } from 'react';
+import { Upload, FileText, CheckCircle, XCircle, Loader2, Download, RefreshCcw, Receipt, Landmark, FileDigit, PieChart, Sparkles, Square, StopCircle } from 'lucide-react';
+import { analyzeFinancialDocument, generateFinancialSummary } from '../services/geminiService';
 import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType, FinancialData } from '../types';
 
@@ -12,6 +12,11 @@ interface IssuerStat {
 export const DocumentProcessor: React.FC = () => {
   const [documents, setDocuments] = useState<ProcessedDocument[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  
+  // Ref to control the processing loop
+  const stopProcessingRef = useRef(false);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     if (event.target.files) {
@@ -22,17 +27,25 @@ export const DocumentProcessor: React.FC = () => {
         fileRaw: file
       }));
       setDocuments(prev => [...prev, ...newFiles]);
+      // Reset summary when new files are added as context changes
+      setSummary(null);
     }
   };
 
   const processAll = async () => {
-    if (isProcessing) return; // Prevent double click
+    if (isProcessing) return;
     setIsProcessing(true);
+    stopProcessingRef.current = false;
     
     const pendingDocs = documents.filter(d => d.status === 'pending' || d.status === 'error');
     
-    // We process sequentially to avoid rate limits and better UX tracking
+    // Process sequentially
     for (const doc of pendingDocs) {
+      // Check stop signal
+      if (stopProcessingRef.current) {
+        break;
+      }
+
       if (!doc.fileRaw) continue;
       
       // Update status to processing
@@ -47,6 +60,29 @@ export const DocumentProcessor: React.FC = () => {
     }
     
     setIsProcessing(false);
+  };
+
+  const handleStop = () => {
+    stopProcessingRef.current = true;
+  };
+
+  const handleGenerateSummary = async () => {
+    const completedData = documents
+      .filter(d => d.status === 'completed' && d.data)
+      .map(d => d.data!);
+    
+    if (completedData.length === 0) return;
+
+    setIsGeneratingSummary(true);
+    try {
+      const text = await generateFinancialSummary(completedData);
+      setSummary(text);
+    } catch (e) {
+      console.error(e);
+      setSummary("Failed to generate summary.");
+    } finally {
+      setIsGeneratingSummary(false);
+    }
   };
 
   const completedDocs = documents.filter(d => d.status === 'completed' && d.data);
@@ -96,27 +132,33 @@ export const DocumentProcessor: React.FC = () => {
                 </label>
             </div>
             
-            {/* Quick Stats or Actions */}
+            {/* Actions */}
             <div className="w-full md:w-auto flex flex-col gap-3 min-w-[200px]">
                  <div className="p-4 bg-gray-50 border border-ypsom-alice rounded-sm">
                     <p className="text-xs text-ypsom-slate uppercase tracking-wider font-semibold">Total Documents</p>
                     <p className="text-2xl font-bold text-ypsom-deep">{documents.length}</p>
                  </div>
-                 <button 
-                    onClick={processAll} 
-                    disabled={isProcessing || documents.length === 0 || documents.every(d => d.status === 'completed')}
-                    className={`flex items-center justify-center px-6 py-3 rounded-sm text-white font-medium transition-all shadow-sm ${
-                    isProcessing || documents.length === 0
-                        ? 'bg-ypsom-slate cursor-not-allowed opacity-70' 
-                        : 'bg-ypsom-deep hover:bg-ypsom-shadow hover:shadow-md'
-                    }`}
-                >
-                    {isProcessing ? (
-                    <><Loader2 className="w-4 h-4 mr-2 animate-spin" /> Processing AI...</>
-                    ) : (
-                    <><RefreshCcw className="w-4 h-4 mr-2" /> Process Queue</>
-                    )}
-                </button>
+                 
+                 {isProcessing ? (
+                   <button 
+                      onClick={handleStop} 
+                      className="flex items-center justify-center px-6 py-3 rounded-sm text-white font-medium transition-all shadow-sm bg-red-600 hover:bg-red-700 hover:shadow-md"
+                   >
+                      <StopCircle className="w-4 h-4 mr-2" /> Stop Processing
+                   </button>
+                 ) : (
+                   <button 
+                      onClick={processAll} 
+                      disabled={documents.length === 0 || documents.every(d => d.status === 'completed')}
+                      className={`flex items-center justify-center px-6 py-3 rounded-sm text-white font-medium transition-all shadow-sm ${
+                      documents.length === 0
+                          ? 'bg-ypsom-slate cursor-not-allowed opacity-70' 
+                          : 'bg-ypsom-deep hover:bg-ypsom-shadow hover:shadow-md'
+                      }`}
+                  >
+                      <RefreshCcw className="w-4 h-4 mr-2" /> Process Queue
+                  </button>
+                 )}
             </div>
           </div>
       </div>
@@ -151,13 +193,39 @@ export const DocumentProcessor: React.FC = () => {
       {completedDocs.length > 0 && (
         <div className="space-y-6 animate-in fade-in duration-500 pt-4">
           
-          <div className="flex items-center justify-between border-b border-ypsom-alice pb-2 mb-4">
-             <h2 className="text-xl font-bold text-ypsom-deep">Executive Summary</h2>
+          <div className="flex flex-col md:flex-row items-center justify-between border-b border-ypsom-alice pb-2 mb-4 gap-4">
+             <div className="flex items-center gap-4">
+               <h2 className="text-xl font-bold text-ypsom-deep">Executive Summary</h2>
+               <button 
+                  onClick={handleGenerateSummary}
+                  disabled={isGeneratingSummary}
+                  className="flex items-center text-xs bg-ypsom-alice/30 hover:bg-ypsom-alice/50 text-ypsom-deep font-bold py-1.5 px-3 rounded-full transition-colors border border-ypsom-alice"
+               >
+                 {isGeneratingSummary ? (
+                   <Loader2 className="w-3 h-3 mr-1 animate-spin" />
+                 ) : (
+                   <Sparkles className="w-3 h-3 mr-1" />
+                 )}
+                 {summary ? "Regenerate Summary" : "Generate AI Summary"}
+               </button>
+             </div>
              <div className="text-right">
                 <p className="text-xs text-ypsom-slate uppercase">Total Processed Value</p>
                 <p className="text-xl font-mono font-bold text-ypsom-deep">{totalValueCHF.toFixed(2)} CHF</p>
              </div>
           </div>
+
+          {/* Summary Box */}
+          {summary && (
+            <div className="bg-gradient-to-r from-ypsom-alice/20 to-transparent p-6 rounded-sm border-l-4 border-ypsom-deep animate-in slide-in-from-top-2">
+              <h3 className="text-sm font-bold text-ypsom-deep mb-2 flex items-center">
+                <Sparkles className="w-4 h-4 mr-2 text-ypsom-slate" /> AI Analysis
+              </h3>
+              <p className="text-sm text-ypsom-shadow leading-relaxed">
+                {summary}
+              </p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <StatCard 

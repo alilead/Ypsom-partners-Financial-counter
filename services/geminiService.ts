@@ -89,8 +89,6 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
       config: {
         responseMimeType: "application/json",
         responseSchema: schema,
-        // Reduced thinking budget slightly to ensure responsiveness, or relying on model defaults
-        // thinkingConfig: { thinkingBudget: 1024 } 
       }
     });
 
@@ -119,6 +117,34 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
     throw error;
+  }
+};
+
+/**
+ * Generates an executive summary based on processed financial data.
+ */
+export const generateFinancialSummary = async (data: FinancialData[]): Promise<string> => {
+  if (data.length === 0) return "No data available to summarize.";
+
+  // Prepare a concise text representation of the data for the prompt
+  const dataSummary = data.map(d => 
+    `- ${d.date}: ${d.issuer} (${d.expenseCategory}) - ${d.amountInCHF.toFixed(2)} CHF`
+  ).join('\n');
+
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: `You are a financial controller at Ypsom Partners. Write a concise executive summary (approx. 3-4 sentences) based on the following processed transactions. 
+      Focus on the total volume, the largest spending categories/issuers, and any notable trends. Use a professional tone.
+      
+      Transaction Data:
+      ${dataSummary}`
+    });
+
+    return response.text || "Could not generate summary.";
+  } catch (error) {
+    console.error("Summary Generation Error:", error);
+    return "Failed to generate summary due to an error.";
   }
 };
 

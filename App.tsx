@@ -39,38 +39,9 @@ function App() {
            </p>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Column: Main Processor (8 cols) */}
-          <div className="lg:col-span-8">
+        {/* Full width container since utility column was removed */}
+        <div className="w-full">
             <DocumentProcessor />
-          </div>
-
-          {/* Right Column: Utilities (4 cols) */}
-          <div className="lg:col-span-4 space-y-6">
-            
-            {/* System Status / Info Widget */}
-            <div className="bg-ypsom-deep text-white p-6 rounded-sm shadow-sm">
-               <h3 className="font-bold text-sm uppercase tracking-wider mb-4 border-b border-white/20 pb-2">System Status</h3>
-               <div className="space-y-3 text-xs">
-                 <div className="flex justify-between">
-                   <span className="text-ypsom-alice/70">Engine</span>
-                   <span className="font-mono">Gemini 3.0 Pro</span>
-                 </div>
-                 <div className="flex justify-between">
-                   <span className="text-ypsom-alice/70">Vision Model</span>
-                   <span className="font-mono">Flash 2.5 (Nano)</span>
-                 </div>
-                 <div className="flex justify-between">
-                   <span className="text-ypsom-alice/70">Secure Mode</span>
-                   <span className="text-green-400 font-bold">Active</span>
-                 </div>
-               </div>
-               <div className="mt-6 pt-4 border-t border-white/10 text-[10px] text-ypsom-alice/50 text-center leading-relaxed">
-                 Use the processor to automatically sort invoices, receipts, and statements. All extracted data is validated before export.
-               </div>
-            </div>
-
-          </div>
         </div>
 
       </main>
