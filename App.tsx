@@ -1,8 +1,14 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
-import { LayoutDashboard } from 'lucide-react';
+import { BankStatementAnalyzer } from './components/BankStatementAnalyzer';
+import { NanoBananaEditor } from './components/NanoBananaEditor';
+import { LayoutDashboard, Wallet, Image as ImageIcon } from 'lucide-react';
+
+type View = 'invoices' | 'bank' | 'images';
 
 function App() {
+  const [currentView, setCurrentView] = useState<View>('invoices');
+
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
       {/* Header */}
@@ -30,24 +36,68 @@ function App() {
         </div>
       </header>
 
+      {/* Navigation Tabs */}
+      <div className="bg-white border-b border-ypsom-alice">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <nav className="flex space-x-8 -mb-px">
+                  <button 
+                    onClick={() => setCurrentView('invoices')}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
+                        currentView === 'invoices' 
+                        ? 'border-ypsom-deep text-ypsom-deep' 
+                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
+                    }`}
+                  >
+                      <LayoutDashboard className="w-4 h-4 mr-2" />
+                      Invoices & Receipts
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('bank')}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
+                        currentView === 'bank' 
+                        ? 'border-ypsom-deep text-ypsom-deep' 
+                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
+                    }`}
+                  >
+                      <Wallet className="w-4 h-4 mr-2" />
+                      Bank Statements
+                  </button>
+                  <button 
+                    onClick={() => setCurrentView('images')}
+                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
+                        currentView === 'images' 
+                        ? 'border-ypsom-deep text-ypsom-deep' 
+                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
+                    }`}
+                  >
+                      <ImageIcon className="w-4 h-4 mr-2" />
+                      Asset Editor
+                  </button>
+              </nav>
+          </div>
+      </div>
+
       {/* Main Dashboard */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        <div className="mb-8 border-b border-ypsom-alice pb-4">
-           <div className="flex items-center gap-3 mb-2">
-             <div className="p-2 bg-ypsom-deep/5 rounded-sm text-ypsom-deep">
-                <LayoutDashboard className="w-6 h-6" />
-             </div>
-             <h1 className="text-2xl font-bold text-ypsom-deep">Financial Operations Dashboard</h1>
-           </div>
-           <p className="text-sm text-ypsom-slate ml-1">
-             AI-powered document classification, expense categorization, and currency standardization.
+        <div className="mb-8">
+           <h1 className="text-2xl font-bold text-ypsom-deep">
+               {currentView === 'invoices' && "Invoice Processing"}
+               {currentView === 'bank' && "Statement Analysis"}
+               {currentView === 'images' && "Creative Asset Studio"}
+           </h1>
+           <p className="text-sm text-ypsom-slate mt-1">
+             {currentView === 'invoices' && "Classify and extract data from invoices and receipts."}
+             {currentView === 'bank' && "Analyze cash flow, calculate totals, and export transaction ledgers."}
+             {currentView === 'images' && "Modify and enhance visual assets using GenAI."}
            </p>
         </div>
 
         {/* Content Area */}
         <div className="w-full min-h-[500px] animate-in fade-in duration-300">
-            <DocumentProcessor />
+            {currentView === 'invoices' && <DocumentProcessor />}
+            {currentView === 'bank' && <BankStatementAnalyzer />}
+            {currentView === 'images' && <NanoBananaEditor />}
         </div>
 
       </main>

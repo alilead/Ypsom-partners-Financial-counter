@@ -1,8 +1,18 @@
+
 export enum DocumentType {
   BANK_STATEMENT = 'Bank Statement',
   INVOICE = 'Invoice',
   RECEIPT = 'Receipt',
   UNKNOWN = 'Unknown'
+}
+
+export interface BankTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  type: 'INCOME' | 'EXPENSE';
+  category?: string;
+  supportingDocRef?: string; // Captured from handwritten circled numbers e.g. "(1)"
 }
 
 export interface FinancialData {
@@ -18,6 +28,8 @@ export interface FinancialData {
   amountInCHF: number;
   conversionRateUsed: number;
   notes: string;
+  lineItems?: BankTransaction[];
+  handwrittenRef?: string; // Captured from handwriting like "P.1-(1)"
 }
 
 export interface ProcessedDocument {
@@ -25,6 +37,26 @@ export interface ProcessedDocument {
   fileName: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   data?: FinancialData;
+  error?: string;
+  fileRaw?: File;
+}
+
+export interface BankStatementAnalysis {
+  accountHolder: string;
+  period: string;
+  currency: string;
+  transactions: BankTransaction[];
+  calculatedTotalIncome?: number;
+  calculatedTotalExpense?: number;
+  openingBalance?: number;
+  closingBalance?: number;
+}
+
+export interface ProcessedBankStatement {
+  id: string;
+  fileName: string;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  data?: BankStatementAnalysis;
   error?: string;
   fileRaw?: File;
 }
