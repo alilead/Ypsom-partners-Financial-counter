@@ -1,5 +1,5 @@
 {
   "name": "Ypsom Partners - Finance tool",
-  "description": "Ypsom Partners internal tool: Process financial documents into structured Excel reports and edit images creatively.",
+  "description": "Ypsom Partners internal tool: Process financial documents into structured Excel reports and reconcile bank statements with supporting invoices.",
   "requestFramePermissions": []
 }

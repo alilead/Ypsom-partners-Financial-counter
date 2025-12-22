@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
 import { BankStatementAnalyzer } from './components/BankStatementAnalyzer';
-import { NanoBananaEditor } from './components/NanoBananaEditor';
-import { LayoutDashboard, Wallet, Image as ImageIcon } from 'lucide-react';
+import { LayoutDashboard, Wallet } from 'lucide-react';
 
-type View = 'invoices' | 'bank' | 'images';
+type View = 'invoices' | 'bank';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('invoices');
@@ -62,17 +61,6 @@ function App() {
                       <Wallet className="w-4 h-4 mr-2" />
                       Bank Statements
                   </button>
-                  <button 
-                    onClick={() => setCurrentView('images')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
-                        currentView === 'images' 
-                        ? 'border-ypsom-deep text-ypsom-deep' 
-                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
-                    }`}
-                  >
-                      <ImageIcon className="w-4 h-4 mr-2" />
-                      Asset Editor
-                  </button>
               </nav>
           </div>
       </div>
@@ -84,12 +72,10 @@ function App() {
            <h1 className="text-2xl font-bold text-ypsom-deep">
                {currentView === 'invoices' && "Invoice Processing"}
                {currentView === 'bank' && "Statement Analysis"}
-               {currentView === 'images' && "Creative Asset Studio"}
            </h1>
            <p className="text-sm text-ypsom-slate mt-1">
              {currentView === 'invoices' && "Classify and extract data from invoices and receipts."}
              {currentView === 'bank' && "Analyze cash flow, calculate totals, and export transaction ledgers."}
-             {currentView === 'images' && "Modify and enhance visual assets using GenAI."}
            </p>
         </div>
 
@@ -97,7 +83,6 @@ function App() {
         <div className="w-full min-h-[500px] animate-in fade-in duration-300">
             {currentView === 'invoices' && <DocumentProcessor />}
             {currentView === 'bank' && <BankStatementAnalyzer />}
-            {currentView === 'images' && <NanoBananaEditor />}
         </div>
 
       </main>

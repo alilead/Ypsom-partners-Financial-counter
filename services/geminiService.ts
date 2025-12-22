@@ -1,4 +1,5 @@
-import { GoogleGenAI, Type, Schema } from "@google/genai";
+
+import { GoogleGenAI, Type } from "@google/genai";
 import { DocumentType, FinancialData, BankStatementAnalysis, BankTransaction } from "../types";
 
 // Initialize Gemini Client
@@ -21,13 +22,14 @@ export const fileToBase64 = (file: Blob): Promise<string> => {
 };
 
 /**
- * Analyzes a financial document with attention to handwritten references
+ * Analyzes a financial document with deep focus on precision for Swiss receipts and handwritten notes.
+ * Now handles target currency conversion dynamically.
  */
-export const analyzeFinancialDocument = async (file: File): Promise<FinancialData> => {
+export const analyzeFinancialDocument = async (file: File, targetCurrency: string = 'CHF'): Promise<FinancialData> => {
   const base64 = await fileToBase64(file);
   const mimeType = file.type;
 
-  const schema: Schema = {
+  const schema = {
     type: Type.OBJECT,
     properties: {
       documentType: {
@@ -37,31 +39,33 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
           DocumentType.RECEIPT,
           DocumentType.BANK_STATEMENT,
           DocumentType.UNKNOWN
-        ]
+        ],
+        description: "Classification: Receipt (thermal/small), Invoice (A4/Detailed), or Bank Statement."
       },
-      date: { type: Type.STRING },
-      issuer: { type: Type.STRING },
-      documentNumber: { type: Type.STRING },
-      totalAmount: { type: Type.NUMBER },
-      originalCurrency: { type: Type.STRING },
-      vatAmount: { type: Type.NUMBER },
-      netAmount: { type: Type.NUMBER },
-      expenseCategory: { type: Type.STRING },
-      amountInCHF: { type: Type.NUMBER },
-      conversionRateUsed: { type: Type.NUMBER },
-      notes: { type: Type.STRING },
-      handwrittenRef: { type: Type.STRING, description: "Any handwritten reference like (1), (2) or P.1-(1) found in corners." },
+      date: { type: Type.STRING, description: "The date of the document (YYYY-MM-DD)." },
+      issuer: { type: Type.STRING, description: "The merchant, bank, or company name." },
+      documentNumber: { type: Type.STRING, description: "Invoice number, receipt ID, or account number." },
+      totalAmount: { type: Type.NUMBER, description: "The final total amount in original currency (Gross / TTC)." },
+      originalCurrency: { type: Type.STRING, description: "3-letter currency code found on document (e.g. USD, EUR, CHF)." },
+      vatAmount: { type: Type.NUMBER, description: "The VAT/TVA amount extracted or calculated in original currency." },
+      netAmount: { type: Type.NUMBER, description: "The amount before tax (Net / HT) in original currency." },
+      expenseCategory: { type: Type.STRING, description: "Internal category (e.g., Marketing, Travel, Maintenance, Fuel, Salary)." },
+      amountInCHF: { type: Type.NUMBER, description: `The total amount converted to the target reporting currency (${targetCurrency}).` },
+      conversionRateUsed: { type: Type.NUMBER, description: `Rate used to convert from originalCurrency to ${targetCurrency}.` },
+      notes: { type: Type.STRING, description: "Summary of items or any anomalies found." },
+      handwrittenRef: { type: Type.STRING, description: "CRITICAL: Any circled number like (1), (2) or text like 'P.3-(5)' written on the paper." },
       lineItems: {
         type: Type.ARRAY,
+        description: "Detailed lines ONLY for bank statements.",
         items: {
           type: Type.OBJECT,
           properties: {
             date: { type: Type.STRING },
             description: { type: Type.STRING },
-            amount: { type: Type.NUMBER },
+            amount: { type: Type.NUMBER, description: "Positive absolute value in original currency." },
             type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
             category: { type: Type.STRING },
-            supportingDocRef: { type: Type.STRING, description: "The handwritten reference number next to the line item if bank statement." }
+            supportingDocRef: { type: Type.STRING, description: "Handwritten circled numbers found next to the line item." }
           },
           required: ["date", "description", "amount", "type"]
         }
@@ -77,13 +81,22 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
           {
-            text: `Analyze this document. 
-            IMPORTANT: Look for handwritten annotations like circled numbers (1), (2), (3) or text like 'P.1-(1)'. 
-            If found on a Receipt/Invoice, store in 'handwrittenRef'.
-            If found next to a line on a Bank Statement, store in 'supportingDocRef'.
+            text: `You are an expert Swiss Accountant. Analyze this financial document with extreme precision.
             
-            Extract ALL transaction lines for bank statements. Classify as INCOME or EXPENSE.
-            Return JSON.`
+            REPORTING SETTING: The user wants all final reports in ${targetCurrency}.
+            
+            DIRECTIONS FOR ACCURACY:
+            1. **IDENTIFY CURRENCY**: Check if the amount is in USD, EUR, or CHF. If it's a USD receipt (often from online tools or US travel), you MUST identify it.
+            2. **CONVERSION**: If the original currency is NOT ${targetCurrency}, estimate the exchange rate for the document date (${new Date().toISOString().split('T')[0]} if not specified) and calculate 'amountInCHF' (which represents the target currency value).
+            3. **IDENTIFY TOTAL**: Look for 'Total TTC', 'Total CHF', 'Total USD', 'Montant à verser'.
+            4. **TAXES**: Identify VAT rates. Swiss rates: 8.1%, 2.6%.
+            5. **HANDWRITTEN MARKS**: Look for handwritten circled numbers.
+            6. **DOCUMENT TYPE**: 
+               - Thermal paper = RECEIPT.
+               - A4 = INVOICE.
+               - Table with Credit/Debit = BANK_STATEMENT.
+            
+            Return the result in valid JSON.`
           }
         ]
       },
@@ -97,11 +110,19 @@ export const analyzeFinancialDocument = async (file: File): Promise<FinancialDat
       let cleanText = response.text.trim();
       if (cleanText.includes("```json")) cleanText = cleanText.split("```json")[1].split("```")[0].trim();
       else if (cleanText.includes("```")) cleanText = cleanText.split("```")[1].split("```")[0].trim();
-      return JSON.parse(cleanText) as FinancialData;
+      
+      const parsed = JSON.parse(cleanText) as FinancialData;
+
+      // Ensure amountInCHF is treated as "amount in target currency"
+      if (!parsed.conversionRateUsed && parsed.originalCurrency !== targetCurrency && parsed.amountInCHF > 0) {
+        parsed.conversionRateUsed = parsed.amountInCHF / parsed.totalAmount;
+      }
+      
+      return parsed;
     }
-    throw new Error("Empty response");
+    throw new Error("Analysis engine returned no data.");
   } catch (error) {
-    console.error("Document Analysis Error:", error);
+    console.error("Critical Analysis Error:", error);
     throw error;
   }
 };
@@ -115,24 +136,23 @@ export const reconcileDocuments = (docs: FinancialData[]): FinancialData[] => {
   return docs.map(doc => {
     if (doc.documentType === DocumentType.BANK_STATEMENT && doc.lineItems) {
       const reconciledLines = doc.lineItems.map(line => {
-        // Match by Handwritten Ref
-        let match = supports.find(s => 
-          s.handwrittenRef && line.supportingDocRef && (
-            s.handwrittenRef.includes(line.supportingDocRef) ||
-            line.supportingDocRef.includes(s.handwrittenRef)
-          )
-        );
+        let match = supports.find(s => {
+          if (!s.handwrittenRef || !line.supportingDocRef) return false;
+          const sRef = s.handwrittenRef.replace(/[^0-9]/g, '');
+          const lRef = line.supportingDocRef.replace(/[^0-9]/g, '');
+          return sRef === lRef && sRef !== '';
+        });
 
-        // Fallback to Amount Match
         if (!match) {
-          match = supports.find(s => Math.abs(s.totalAmount - line.amount) < 0.01);
+          match = supports.find(s => Math.abs(s.totalAmount - line.amount) < 0.05);
         }
 
         if (match) {
           return {
             ...line,
             category: match.expenseCategory,
-            notes: `Linked: ${match.issuer} (${match.handwrittenRef || 'Auto-match'})`
+            description: `${line.description} (Linked to ${match.issuer})`,
+            notes: `Auto-linked via ${match.handwrittenRef ? 'Ref: ' + match.handwrittenRef : 'Amount'}`
           };
         }
         return line;
@@ -147,50 +167,30 @@ export const reconcileDocuments = (docs: FinancialData[]): FinancialData[] => {
 /**
  * Summarize Financial Data
  */
-export const generateFinancialSummary = async (data: FinancialData[]): Promise<string> => {
-  if (data.length === 0) return "No data.";
-  const summaryBlob = data.map(d => `${d.documentType}: ${d.issuer} - ${d.amountInCHF.toFixed(2)} CHF`).join('\n');
+export const generateFinancialSummary = async (data: FinancialData[], targetCurrency: string): Promise<string> => {
+  if (data.length === 0) return "No data provided.";
+  const summaryBlob = data.map(d => `${d.documentType}: ${d.issuer} - ${d.amountInCHF.toFixed(2)} ${targetCurrency} (Orig: ${d.totalAmount} ${d.originalCurrency})`).join('\n');
   
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: `Perform a financial audit summary of these documents. Mention specifically if statements match invoices. Data:\n${summaryBlob}`
+      contents: `You are a financial controller. Provide a professional summary of this batch. Reporting currency is ${targetCurrency}. Data:\n${summaryBlob}`
     });
-    return response.text || "Summary unavailable.";
+    return response.text || "Summary generation timed out.";
   } catch (error) {
-    return "Summary failed.";
+    return "Error generating summary.";
   }
 };
 
-/** Legacy compatibility */
-export const analyzeBankStatement = async (f: File) => {
-  const d = await analyzeFinancialDocument(f);
+/** Legacy compatibility for Bank Analyzer view */
+export const analyzeBankStatement = async (f: File, targetCurrency: string = 'CHF') => {
+  const d = await analyzeFinancialDocument(f, targetCurrency);
   return {
-    accountHolder: d.issuer, period: d.date, currency: d.originalCurrency,
+    accountHolder: d.issuer, 
+    period: d.date, 
+    currency: d.originalCurrency,
     transactions: d.lineItems || [],
-    calculatedTotalIncome: d.lineItems?.filter(i => i.type === 'INCOME').reduce((s,i) => s+i.amount, 0),
-    calculatedTotalExpense: d.lineItems?.filter(i => i.type === 'EXPENSE').reduce((s,i) => s+i.amount, 0)
+    calculatedTotalIncome: d.lineItems?.filter(i => i.type === 'INCOME').reduce((s,i) => s+i.amount, 0) || 0,
+    calculatedTotalExpense: d.lineItems?.filter(i => i.type === 'EXPENSE').reduce((s,i) => s+i.amount, 0) || 0
   };
-};
-
-/** Image Edit */
-export const editImageWithGemini = async (file: File, prompt: string): Promise<string> => {
-  const base64Data = await fileToBase64(file);
-  const mimeType = file.type;
-  const response = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [
-        { inlineData: { mimeType, data: base64Data } },
-        { text: prompt }
-      ]
-    }
-  });
-  const parts = response.candidates?.[0]?.content?.parts;
-  if (parts) {
-    for (const p of parts) {
-      if (p.inlineData) return `data:image/png;base64,${p.inlineData.data}`;
-    }
-  }
-  throw new Error("No image returned");
 };
