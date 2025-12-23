@@ -13,6 +13,8 @@ export interface BankTransaction {
   type: 'INCOME' | 'EXPENSE';
   category?: string;
   supportingDocRef?: string; // Captured from handwritten circled numbers e.g. "(1)"
+  // Added optional notes to capture reconciliation or enrichment data
+  notes?: string;
 }
 
 export interface FinancialData {
