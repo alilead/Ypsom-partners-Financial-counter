@@ -32,10 +32,11 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 4, delay = 2500): Pr
       errorStr.includes('proxy') || 
       errorStr.includes('timeout') ||
       errorStr.includes('code: 6') ||
-      errorStr.includes('internal error');
+      errorStr.includes('internal error') ||
+      errorStr.includes('thinking');
     
     if (retries > 0 && isRetryable) {
-      console.warn(`Retry logic: connection instability detected. Retrying... (${retries} left)`);
+      console.warn(`Audit System: Retrying due to connection instability... (${retries} left)`);
       await new Promise(resolve => setTimeout(resolve, delay));
       return withRetry(fn, retries - 1, delay * 2);
     }
@@ -44,13 +45,15 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 4, delay = 2500): Pr
 };
 
 /**
- * Analyzes a financial document with high precision using Pro model for Search Grounding.
+ * Analyzes a financial document with high precision using Gemini 3 Pro.
+ * Optimized for exhaustive 30+ page capture and accurate exchange rates.
  */
 export const analyzeFinancialDocument = async (file: File, targetCurrency: string = 'CHF'): Promise<FinancialData> => {
   const base64 = await fileToBase64(file);
   const mimeType = file.type;
 
   return withRetry(async () => {
+    // New instance per request for fresh context and API key
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
     const schema = {
@@ -68,13 +71,13 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         vatAmount: { type: Type.NUMBER },
         netAmount: { type: Type.NUMBER },
         expenseCategory: { type: Type.STRING },
-        amountInCHF: { type: Type.NUMBER, description: `Amount converted to ${targetCurrency}` },
-        conversionRateUsed: { type: Type.NUMBER, description: "Official exchange rate used for conversion" },
+        amountInCHF: { type: Type.NUMBER, description: `Precision conversion to ${targetCurrency}` },
+        conversionRateUsed: { type: Type.NUMBER, description: "Historical mid-market rate found via Search" },
         notes: { type: Type.STRING },
         handwrittenRef: { type: Type.STRING },
         lineItems: {
           type: Type.ARRAY,
-          description: "MANDATORY: Extract every single transaction from every page. Scan all 30+ pages if present. NEVER summarize.",
+          description: "MANDATORY: List EVERY SINGLE row from ALL pages. NEVER summarize.",
           items: {
             type: Type.OBJECT,
             properties: {
@@ -89,7 +92,7 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
           }
         }
       },
-      required: ["documentType", "totalAmount", "originalCurrency", "amountInCHF", "issuer", "conversionRateUsed"]
+      required: ["documentType", "totalAmount", "originalCurrency", "amountInCHF", "issuer", "conversionRateUsed", "date"]
     };
 
     const response = await ai.models.generateContent({
@@ -98,12 +101,12 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
           {
-            text: `AUDIT TASK: EXHAUSTIVE EXTRACTION & HIGH-PRECISION EXCHANGE RATES.
-            1. Scan EVERY page of the PDF/image sequentially. Extract ALL transactions. Do NOT skip any rows or summarize.
-            2. Identify the document date and original currency.
-            3. If the currency is NOT ${targetCurrency}, use GOOGLE SEARCH to find the OFFICIAL exchange rate for ${targetCurrency} on the specific document date (or closest business day). 
-            4. Use that accurate historical rate to calculate 'amountInCHF' (or target) and fill 'conversionRateUsed'.
-            5. Provide a strict JSON output matching the schema.`
+            text: `AUDIT PROTOCOL: HIGH ACCURACY & TOTAL ENUMERATION.
+            1. Scan ALL pages of the document. Extract EVERY single table row. Do NOT truncate or summarize.
+            2. For the date identified on the document, use GOOGLE SEARCH to find the EXACT historical mid-market exchange rate between the document's currency and ${targetCurrency}.
+            3. Use that rate to calculate 'amountInCHF'.
+            4. If the document is illegible or contains no financial amounts, ensure totalAmount is returned as 0.
+            5. Output ONLY valid JSON.`
           }
         ]
       },
@@ -111,23 +114,42 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         responseMimeType: "application/json",
         responseSchema: schema,
         tools: [{ googleSearch: {} }],
-        thinkingConfig: { thinkingBudget: 0 }
+        // Critical: Set both maxOutputTokens and thinkingBudget to avoid Budget 0 error
+        maxOutputTokens: 65536,
+        thinkingBudget: 32768
       }
     });
 
     const text = response.text;
-    if (!text) throw new Error("AI failed to return structured data.");
+    if (!text) throw new Error("Cloud analysis failed to return data.");
     
     let cleanText = text.trim();
     if (cleanText.includes("```json")) cleanText = cleanText.split("```json")[1].split("```")[0].trim();
     else if (cleanText.includes("```")) cleanText = cleanText.split("```")[1].split("```")[0].trim();
     
-    return JSON.parse(cleanText) as FinancialData;
+    const parsed = JSON.parse(cleanText) as FinancialData;
+    
+    // VALIDATION: If total is 0.00, it's a failed extraction
+    if (!parsed.totalAmount || parsed.totalAmount === 0) {
+      throw new Error("Extraction failed: Total amount is 0.00. Please re-upload a clearer image.");
+    }
+
+    // Safety check for rates if search fails
+    if (!parsed.conversionRateUsed || parsed.conversionRateUsed === 0) {
+      parsed.conversionRateUsed = parsed.originalCurrency === targetCurrency ? 1 : (parsed.amountInCHF / parsed.totalAmount);
+    }
+
+    return parsed;
   });
 };
 
 export const analyzeBankStatement = async (f: File, targetCurrency: string = 'CHF') => {
   const d = await analyzeFinancialDocument(f, targetCurrency);
+  
+  if (!d.lineItems || d.lineItems.length === 0) {
+    throw new Error("No transactions found in this statement. Please check document quality.");
+  }
+
   return {
     accountHolder: d.issuer, 
     period: d.date, 
@@ -140,12 +162,12 @@ export const analyzeBankStatement = async (f: File, targetCurrency: string = 'CH
 
 export const generateFinancialSummary = async (data: FinancialData[], targetCurrency: string): Promise<string> => {
   if (data.length === 0) return "No data.";
-  const summaryBlob = data.map(d => `${d.issuer} - ${d.amountInCHF.toFixed(2)} ${targetCurrency}`).join('\n');
+  const summaryBlob = data.map(d => `${d.issuer}: ${d.amountInCHF.toFixed(2)} ${targetCurrency}`).join('\n');
   return withRetry(async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: `Generate a professional audit executive summary for the following batch:\n${summaryBlob}`
+      contents: `Provide a high-level executive summary for this financial audit batch:\n${summaryBlob}`
     });
     return response.text || "Summary failed.";
   });

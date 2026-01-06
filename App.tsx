@@ -1,12 +1,15 @@
+
 import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
 import { BankStatementAnalyzer } from './components/BankStatementAnalyzer';
 import { LayoutDashboard, Wallet } from 'lucide-react';
+import { ProcessedDocument } from './types';
 
 type View = 'invoices' | 'bank';
 
 function App() {
   const [currentView, setCurrentView] = useState<View>('invoices');
+  const [processedDocuments, setProcessedDocuments] = useState<ProcessedDocument[]>([]);
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
@@ -75,14 +78,23 @@ function App() {
            </h1>
            <p className="text-sm text-ypsom-slate mt-1">
              {currentView === 'invoices' && "Classify and extract data from invoices and receipts."}
-             {currentView === 'bank' && "Analyze cash flow, calculate totals, and export transaction ledgers."}
+             {currentView === 'bank' && "Analyze cash flow, calculate totals, and reconcile with uploaded evidence."}
            </p>
         </div>
 
         {/* Content Area */}
         <div className="w-full min-h-[500px] animate-in fade-in duration-300">
-            {currentView === 'invoices' && <DocumentProcessor />}
-            {currentView === 'bank' && <BankStatementAnalyzer />}
+            {currentView === 'invoices' && (
+              <DocumentProcessor 
+                documents={processedDocuments} 
+                setDocuments={setProcessedDocuments} 
+              />
+            )}
+            {currentView === 'bank' && (
+              <BankStatementAnalyzer 
+                supportingInvoices={processedDocuments.filter(d => d.status === 'completed' && d.data).map(d => ({...d.data!, sourceFile: d.fileName}))} 
+              />
+            )}
         </div>
 
       </main>

@@ -3,67 +3,78 @@ import * as XLSX from 'xlsx';
 import { FinancialData, DocumentType } from '../types';
 
 /**
- * Exports financial data to Excel with absolute transparency.
- * If a document has line items (Statements/Detailed Invoices), every item gets its own row.
+ * Exports financial data to Excel matching the UI table exactly.
+ * Columns: Date, Issuer, Original Amount, VAT, Exchange Rate, Total (Converted)
+ * Includes a summary TOTAL row at the bottom with the currency.
  */
-export const exportToExcel = (data: FinancialData[], fileNamePrefix: string) => {
+export const exportToExcel = (data: FinancialData[], fileNamePrefix: string, reportingCurrency: string = 'CHF') => {
   if (data.length === 0) {
     return;
   }
 
   const rows: any[] = [];
+  let grandTotal = 0;
 
   data.forEach(item => {
-    if (item.lineItems && item.lineItems.length > 0) {
-      // For bank statements and detailed invoices, expand all transactions
+    const origAmt = item.totalAmount;
+    const vat = item.vatAmount || 0;
+    const exRate = item.conversionRateUsed || 1;
+    const totalTarget = item.amountInCHF;
+
+    // Check if it's a statement with line items to expand
+    if (item.documentType === DocumentType.BANK_STATEMENT && item.lineItems && item.lineItems.length > 0) {
       item.lineItems.forEach(line => {
+        const lineTotal = line.amount * exRate;
+        grandTotal += lineTotal;
         rows.push({
-          'Audit Category': item.documentType,
-          'Doc Date': item.date,
-          'Merchant/Issuer': item.issuer,
-          'Ref Number': item.documentNumber || '',
-          'Trans Date': line.date,
-          'Description': line.description,
-          'Orig Amount': line.amount,
-          'Currency': item.originalCurrency,
-          'Type': line.type,
-          'VAT': item.vatAmount || 0,
-          'Amount (CHF)': (line.amount * (item.conversionRateUsed || 1)).toFixed(2),
-          'Ex. Rate': item.conversionRateUsed || 1,
-          'Handwritten Ref': item.handwrittenRef || line.supportingDocRef || '',
-          'Notes': line.notes || item.notes || ''
+          'Date': line.date,
+          'Issuer': item.issuer,
+          'Original Amount': `${line.amount.toFixed(2)} ${item.originalCurrency}`,
+          'VAT': '0.00',
+          'Exchange Rate': exRate.toFixed(4),
+          [`Total (${reportingCurrency})`]: lineTotal.toFixed(2)
         });
       });
     } else {
-      // Simple row for single-entry receipts or invoices
+      // Direct receipt or invoice entry
+      grandTotal += totalTarget;
       rows.push({
-        'Audit Category': item.documentType,
-        'Doc Date': item.date,
-        'Merchant/Issuer': item.issuer,
-        'Ref Number': item.documentNumber || '',
-        'Trans Date': item.date,
-        'Description': `Total from ${item.documentType}`,
-        'Orig Amount': item.totalAmount,
-        'Currency': item.originalCurrency,
-        'Type': 'EXPENSE',
-        'VAT': item.vatAmount || 0,
-        'Amount (CHF)': item.amountInCHF.toFixed(2),
-        'Ex. Rate': item.conversionRateUsed || 1,
-        'Handwritten Ref': item.handwrittenRef || '',
-        'Notes': item.notes || ''
+        'Date': item.date,
+        'Issuer': item.issuer,
+        'Original Amount': `${origAmt.toFixed(2)} ${item.originalCurrency}`,
+        'VAT': vat.toFixed(2),
+        'Exchange Rate': exRate.toFixed(4),
+        [`Total (${reportingCurrency})`]: totalTarget.toFixed(2)
       });
     }
+  });
+
+  // Add an empty row for spacing
+  rows.push({});
+
+  // Add the TOTAL row
+  rows.push({
+    'Date': '',
+    'Issuer': 'GRAND TOTAL',
+    'Original Amount': '',
+    'VAT': '',
+    'Exchange Rate': '',
+    [`Total (${reportingCurrency})`]: `${grandTotal.toFixed(2)} ${reportingCurrency}`
   });
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, worksheet, "Audit_Ledger");
 
-  // Aesthetic column widths
+  // Format column widths for a professional look
   worksheet['!cols'] = [
-    {wch: 15}, {wch: 12}, {wch: 25}, {wch: 15}, {wch: 12}, {wch: 40}, 
-    {wch: 12}, {wch: 10}, {wch: 10}, {wch: 10}, {wch: 15}, {wch: 10}, {wch: 15}, {wch: 25}
+    { wch: 15 }, // Date
+    { wch: 30 }, // Issuer
+    { wch: 20 }, // Original Amount
+    { wch: 12 }, // VAT
+    { wch: 15 }, // Exchange Rate
+    { wch: 18 }  // Total
   ];
 
-  XLSX.writeFile(workbook, `${fileNamePrefix}_${new Date().toISOString().split('T')[0]}.xlsx`);
+  XLSX.writeFile(workbook, `${fileNamePrefix}_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
 };
