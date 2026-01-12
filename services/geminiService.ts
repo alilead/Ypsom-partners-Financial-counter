@@ -1,4 +1,5 @@
 
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { DocumentType, FinancialData, BankStatementAnalysis, BankTransaction } from "../types";
 
@@ -128,6 +129,14 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
     else if (cleanText.includes("```")) cleanText = cleanText.split("```")[1].split("```")[0].trim();
     
     const parsed = JSON.parse(cleanText) as FinancialData;
+
+    // Fix: Extract grounding URLs from groundingMetadata as required when using googleSearch tool
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (groundingChunks) {
+      parsed.groundingUrls = groundingChunks
+        .filter((chunk: any) => chunk.web && chunk.web.uri)
+        .map((chunk: any) => chunk.web.uri);
+    }
     
     // VALIDATION: If total is 0.00, it's a failed extraction
     if (!parsed.totalAmount || parsed.totalAmount === 0) {

@@ -1,4 +1,5 @@
 
+
 export enum DocumentType {
   BANK_STATEMENT = 'Bank Statement',
   INVOICE = 'Invoice',
@@ -32,6 +33,8 @@ export interface FinancialData {
   notes: string;
   lineItems?: BankTransaction[];
   handwrittenRef?: string; // Captured from handwriting like "P.1-(1)"
+  // groundingUrls added to store search source URLs as required by Search Grounding guidelines
+  groundingUrls?: string[]; 
 }
 
 export interface ProcessedDocument {
