@@ -1,8 +1,7 @@
-
 import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
 import { FinancialInsights } from './components/FinancialInsights';
-import { LayoutDashboard, ShieldCheck, Sparkles } from 'lucide-react';
+import { ShieldCheck, Sparkles } from 'lucide-react';
 import { ProcessedDocument } from './types';
 
 function App() {
@@ -50,17 +49,18 @@ function App() {
            <p className="text-sm text-ypsom-slate mt-1">
              {activeTab === 'audit' 
                ? 'Convert unstructured bank statements and invoices into verified financial data.' 
-               : 'Leverage LLM Nature Language to query records and analyze monthly/yearly planning.'}
+               : 'Leverage AI to query records, analyze planning, and perform visual forensic analysis on documents.'}
            </p>
         </div>
 
         <div className="w-full animate-in fade-in duration-300">
-            {activeTab === 'audit' ? (
+            {activeTab === 'audit' && (
               <DocumentProcessor 
                 documents={processedDocuments} 
                 setDocuments={setProcessedDocuments} 
               />
-            ) : (
+            )}
+            {activeTab === 'insights' && (
               <FinancialInsights documents={processedDocuments} />
             )}
         </div>
@@ -68,9 +68,10 @@ function App() {
       
       <footer className="bg-ypsom-darker py-6 mt-12 border-t border-ypsom-deep">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-ypsom-slate/40 text-[10px] uppercase font-bold tracking-widest">
-          <div>&copy; {new Date().getFullYear()} Ypsom Partners • Advanced Audit Engine v3.0</div>
+          <div>&copy; {new Date().getFullYear()} Ypsom Partners • Advanced Audit Engine v3.1</div>
           <div className="flex space-x-6">
             <span>LLM-Based Extraction</span>
+            <span>Nano Banana Vision</span>
             <span>RAG-Optimized</span>
           </div>
         </div>

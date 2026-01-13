@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3, FileSearch, Sparkles } from 'lucide-react';
+import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3, FileSearch, Sparkles, Building2, Edit3 } from 'lucide-react';
 import { analyzeFinancialDocument, generateAuditSummary } from '../services/geminiService';
 import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType } from '../types';
@@ -48,7 +48,7 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
     stopProcessingRef.current = false;
     
     const pendingIndices = documents
-      .map((d, i) => (d.status === 'pending') ? i : -1)
+      .map((d, i) => (d.status === 'pending' || d.status === 'error') ? i : -1)
       .filter(i => i !== -1);
 
     const CONCURRENCY = 5;
@@ -63,6 +63,8 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
 
       try {
         const result = await analyzeFinancialDocument(doc.fileRaw, reportingCurrency);
+        
+        // Manual amount logic: instead of throwing, we allow the document to complete but flag it
         setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'completed', data: result } : d));
       } catch (err: any) {
         setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'error', error: err.message } : d));
@@ -81,6 +83,24 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
     }
     await Promise.all(tasks);
     setIsProcessing(false);
+  };
+
+  const handleManualAmountChange = (docId: string, value: string) => {
+    const numValue = parseFloat(value) || 0;
+    setDocuments(prev => prev.map(doc => {
+      if (doc.id === docId && doc.data) {
+        const rate = doc.data.conversionRateUsed || 1;
+        return {
+          ...doc,
+          data: {
+            ...doc.data,
+            totalAmount: numValue,
+            amountInCHF: numValue * rate
+          }
+        };
+      }
+      return doc;
+    }));
   };
 
   const handleSummarize = async () => {
@@ -103,7 +123,17 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
 
   const invoiceSummary = useMemo(() => {
     const total = invoices.reduce((sum, doc) => sum + (doc.data?.amountInCHF || 0), 0);
-    return { total, count: invoices.length };
+    const totalVat = invoices.reduce((sum, doc) => sum + (doc.data?.vatAmount || 0), 0);
+    
+    const issuerMap: Record<string, { count: number, total: number }> = {};
+    invoices.forEach(inv => {
+      const issuer = inv.data?.issuer || 'Unknown Issuer';
+      if (!issuerMap[issuer]) issuerMap[issuer] = { count: 0, total: 0 };
+      issuerMap[issuer].count++;
+      issuerMap[issuer].total += (inv.data?.amountInCHF || 0);
+    });
+
+    return { total, totalVat, count: invoices.length, issuers: Object.entries(issuerMap).sort((a,b) => b[1].total - a[1].total) };
   }, [invoices]);
 
   return (
@@ -162,34 +192,17 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
              className="w-full h-12 bg-white border border-ypsom-deep text-ypsom-deep rounded-sm font-black text-[11px] uppercase tracking-[0.2em] hover:bg-ypsom-alice/20 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
            >
              {isSummarizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-             Summary
+             AI Summary Report
            </button>
         </div>
       </div>
-
-      {/* AI Executive Summary Block */}
-      {auditSummary && (
-        <div className="bg-white rounded-sm border-l-4 border-ypsom-deep shadow-xl p-8 animate-in fade-in slide-in-from-top-4 duration-500">
-           <div className="flex justify-between items-center mb-6 border-b border-ypsom-alice pb-4">
-              <h3 className="text-sm font-black uppercase tracking-widest text-ypsom-deep flex items-center gap-3">
-                <Sparkles className="w-5 h-5" /> AI Executive Audit Summary
-              </h3>
-              <button onClick={() => setAuditSummary(null)} className="text-ypsom-slate hover:text-red-600">
-                <X className="w-4 h-4" />
-              </button>
-           </div>
-           <div className="prose prose-sm max-w-none text-ypsom-deep leading-relaxed font-medium">
-              <div dangerouslySetInnerHTML={{ __html: auditSummary.replace(/\n/g, '<br/>') }} />
-           </div>
-        </div>
-      )}
 
       {/* Audit Queue Diagnostics */}
       {documents.length > 0 && (
         <div className="bg-white rounded-sm border border-ypsom-alice overflow-hidden shadow-sm">
           <div className="px-6 py-4 bg-gray-50 border-b border-ypsom-alice flex justify-between items-center">
              <h3 className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate flex items-center gap-2">
-               <Cpu className="w-4 h-4" /> Gemini 3.0 Audit Feed
+               <Cpu className="w-4 h-4" /> Audit Feed
              </h3>
              <button onClick={() => setDocuments([])} className="text-[10px] font-bold text-red-600 hover:underline uppercase">Clear Queue</button>
           </div>
@@ -205,26 +218,39 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
               </thead>
               <tbody className="divide-y divide-ypsom-alice">
                 {documents.map(doc => (
-                  <tr key={doc.id} className={`${doc.status === 'error' ? 'bg-red-50/50' : 'hover:bg-gray-50/30'}`}>
+                  <tr key={doc.id} className={`${doc.status === 'error' ? 'bg-red-50' : 'hover:bg-gray-50/30'}`}>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <FileText className={`w-4 h-4 ${doc.status === 'error' ? 'text-red-400' : 'text-ypsom-slate'}`} />
-                        <span className="font-bold text-ypsom-deep break-all">{doc.fileName}</span>
+                        <FileText className={`w-4 h-4 ${doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`} />
+                        <span className={`font-bold ${doc.status === 'error' ? 'text-red-700' : 'text-ypsom-deep'} break-all`}>{doc.fileName}</span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-2">
                          {doc.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin text-ypsom-deep" />}
-                         <span className={`uppercase font-black text-[10px] ${doc.status === 'completed' ? 'text-green-600' : doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`}>
-                          {doc.status}
+                         {doc.status === 'error' && <AlertCircle className="w-3 h-3 text-red-600" />}
+                         {doc.status === 'completed' && doc.data?.totalAmount === 0 && <AlertCircle className="w-3 h-3 text-amber-500" />}
+                         <span className={`uppercase font-black text-[10px] ${doc.status === 'completed' ? (doc.data?.totalAmount === 0 ? 'text-amber-600' : 'text-green-600') : doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`}>
+                          {doc.status === 'completed' && doc.data?.totalAmount === 0 ? 'Review Needed' : doc.status}
                         </span>
                       </div>
                     </td>
                     <td className="px-6 py-4">
                       {doc.error ? (
-                        <div className="flex items-start gap-3 p-3 bg-white border border-red-100 rounded-sm shadow-sm text-red-700">
-                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <p className="font-bold leading-relaxed">{doc.error}</p>
+                        <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-sm text-red-700">
+                          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <div className="flex flex-col gap-1">
+                            <p className="font-black uppercase text-[9px] tracking-widest text-red-800">Critical Diagnostic Error</p>
+                            <p className="font-bold leading-relaxed text-[11px]">{doc.error}</p>
+                          </div>
+                        </div>
+                      ) : doc.status === 'completed' && doc.data?.totalAmount === 0 ? (
+                        <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-sm text-amber-800">
+                          <Edit3 className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <div className="flex flex-col gap-1">
+                            <p className="font-black uppercase text-[9px] tracking-widest text-amber-900">Manual Entry Required</p>
+                            <p className="font-bold leading-relaxed text-[11px]">AI could not resolve document amount. Please enter manually in the Ledger below.</p>
+                          </div>
                         </div>
                       ) : (
                         <span className="italic text-ypsom-slate opacity-60">
@@ -255,53 +281,86 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
                 </h2>
                 <p className="text-[11px] text-ypsom-slate font-bold uppercase mt-1 opacity-60">Cumulative audit for fiscal reconciliation.</p>
               </div>
-              <div className="bg-ypsom-deep px-6 py-3 rounded-sm text-white shadow-xl flex items-center gap-4">
-                 <div className="p-2 bg-white/10 rounded-sm">
-                    <TrendingUp className="w-5 h-5 text-green-400" />
+              <div className="bg-ypsom-deep px-6 py-3 rounded-sm text-white shadow-xl flex items-center gap-8">
+                 <div className="flex items-center gap-4">
+                   <div className="p-2 bg-white/10 rounded-sm">
+                      <TrendingUp className="w-5 h-5 text-green-400" />
+                   </div>
+                   <div>
+                      <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Total Audited Volume</p>
+                      <p className="text-lg font-black font-mono">
+                        {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
+                      </p>
+                   </div>
                  </div>
-                 <div>
-                    <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Total Audited Volume</p>
-                    <p className="text-lg font-black font-mono">
-                      {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
-                    </p>
+                 <div className="border-l border-white/20 pl-8">
+                   <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Audited VAT Total</p>
+                   <p className="text-lg font-black font-mono text-alice">
+                     {invoiceSummary.totalVat.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
+                   </p>
                  </div>
               </div>
            </div>
 
-           <div className="bg-white rounded-sm shadow-xl border border-ypsom-alice overflow-hidden">
+           <div className="bg-white rounded-sm shadow-xl border border-ypsom-alice overflow-x-auto">
              <table className="min-w-full text-[12px]">
                <thead className="bg-ypsom-shadow text-white uppercase tracking-widest font-black">
                  <tr>
                    <th className="px-6 py-5 text-left">Date</th>
+                   <th className="px-6 py-5 text-left">Filename</th>
                    <th className="px-6 py-5 text-left">Entity / Issuer</th>
                    <th className="px-6 py-5 text-right">Original Value</th>
+                   <th className="px-6 py-5 text-right">VAT</th>
                    <th className="px-6 py-5 text-right">Audited Sum ({reportingCurrency})</th>
                  </tr>
                </thead>
                <tbody className="divide-y divide-ypsom-alice">
-                 {invoices.map(doc => (
-                   <tr key={doc.id} className="hover:bg-ypsom-alice/5 transition-colors">
-                     <td className="px-6 py-5 font-mono text-ypsom-slate">{doc.data!.date}</td>
-                     <td className="px-6 py-5">
-                        <div className="flex flex-col">
-                           <span className="font-black text-ypsom-deep text-sm">{doc.data!.issuer}</span>
-                           <span className="text-[9px] font-bold text-ypsom-slate uppercase tracking-tighter opacity-40">Ref: {doc.data!.documentNumber || 'N/A'}</span>
-                        </div>
-                     </td>
-                     <td className="px-6 py-5 text-right">
-                       <span className="font-bold text-ypsom-slate">
-                          {doc.data!.totalAmount.toLocaleString()} <span className="text-[9px] opacity-60 font-black">{doc.data!.originalCurrency}</span>
-                       </span>
-                     </td>
-                     <td className="px-6 py-5 text-right font-black text-ypsom-deep text-sm bg-ypsom-alice/5">
-                        {doc.data!.amountInCHF.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
-                     </td>
-                   </tr>
-                 ))}
+                 {invoices.map(doc => {
+                   const isManualNeeded = (doc.data?.totalAmount === 0);
+                   return (
+                     <tr key={doc.id} className="hover:bg-ypsom-alice/5 transition-colors">
+                       <td className="px-6 py-5 font-mono text-ypsom-slate whitespace-nowrap">{doc.data!.date}</td>
+                       <td className="px-6 py-5">
+                         <span className="text-[10px] font-mono text-ypsom-slate/70 truncate max-w-[120px] inline-block">{doc.fileName}</span>
+                       </td>
+                       <td className="px-6 py-5">
+                          <div className="flex flex-col">
+                             <span className="font-black text-ypsom-deep text-sm">{doc.data!.issuer}</span>
+                             <span className="text-[9px] font-bold text-ypsom-slate uppercase tracking-tighter opacity-40">Ref: {doc.data!.documentNumber || 'N/A'}</span>
+                          </div>
+                       </td>
+                       <td className="px-6 py-5 text-right">
+                         <div className="flex flex-col items-end">
+                            {isManualNeeded ? (
+                              <div className="relative">
+                                <input 
+                                  type="number"
+                                  placeholder="Enter Amount"
+                                  className="w-28 text-right px-2 py-1 border-2 border-amber-300 rounded-sm bg-amber-50 font-bold text-ypsom-deep focus:outline-none focus:ring-1 focus:ring-amber-500 text-xs"
+                                  onChange={(e) => handleManualAmountChange(doc.id, e.target.value)}
+                                />
+                                <span className="absolute -top-4 right-0 text-[8px] font-black text-amber-600 uppercase tracking-widest">Action Required</span>
+                              </div>
+                            ) : (
+                              <span className="font-bold text-ypsom-slate">
+                                {doc.data!.totalAmount.toLocaleString()} <span className="text-[9px] opacity-60 font-black">{doc.data!.originalCurrency}</span>
+                              </span>
+                            )}
+                         </div>
+                       </td>
+                       <td className="px-6 py-5 text-right text-ypsom-slate/60 font-mono">
+                         {doc.data!.vatAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}
+                       </td>
+                       <td className="px-6 py-5 text-right font-black text-ypsom-deep text-sm bg-ypsom-alice/5">
+                          {doc.data!.amountInCHF.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
+                       </td>
+                     </tr>
+                   );
+                 })}
                </tbody>
                <tfoot className="bg-ypsom-alice/20 border-t-2 border-ypsom-alice font-black">
                   <tr>
-                    <td colSpan={3} className="px-6 py-5 text-right text-ypsom-slate uppercase tracking-widest">Grand Total Audited:</td>
+                    <td colSpan={5} className="px-6 py-5 text-right text-ypsom-slate uppercase tracking-widest">Grand Total Audited:</td>
                     <td className="px-6 py-5 text-right text-lg text-ypsom-deep font-mono">
                        {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
                     </td>
