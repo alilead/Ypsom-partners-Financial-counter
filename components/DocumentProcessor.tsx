@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3, FileSearch, Sparkles, Building2, Edit3 } from 'lucide-react';
+import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3, FileSearch, Sparkles, Building2, Edit3, FileSpreadsheet } from 'lucide-react';
 import { analyzeFinancialDocument, generateAuditSummary } from '../services/geminiService';
 import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType } from '../types';
@@ -13,7 +13,6 @@ interface DocumentProcessorProps {
 export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents, setDocuments }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
-  const [auditSummary, setAuditSummary] = useState<string | null>(null);
   const [reportingCurrency, setReportingCurrency] = useState('CHF');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeWorkerCount, setActiveWorkerCount] = useState(0);
@@ -28,17 +27,12 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
   }, [documents]);
 
   const addFiles = (files: File[]) => {
-    const newDocs: ProcessedDocument[] = Array.from(files).map(f => {
-      const isDuplicate = documents.some(doc => doc.fileName === f.name && doc.fileRaw?.size === f.size);
-      
-      return {
-        id: Math.random().toString(36).substr(2, 9),
-        fileName: f.name,
-        status: isDuplicate ? 'error' : 'pending',
-        error: isDuplicate ? 'Duplicate File: This document has already been added to the queue.' : undefined,
-        fileRaw: f
-      };
-    });
+    const newDocs: ProcessedDocument[] = Array.from(files).map(f => ({
+      id: Math.random().toString(36).substr(2, 9),
+      fileName: f.name,
+      status: 'pending',
+      fileRaw: f
+    }));
     setDocuments(prev => [...prev, ...newDocs]);
   };
 
@@ -51,20 +45,14 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
       .map((d, i) => (d.status === 'pending' || d.status === 'error') ? i : -1)
       .filter(i => i !== -1);
 
-    const CONCURRENCY = 5;
-    let currentIdx = 0;
-    const tasks = new Set<Promise<void>>();
-
     const run = async (idx: number) => {
       const doc = documents[idx];
       if (!doc.fileRaw) return;
       setActiveWorkerCount(prev => prev + 1);
-      setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'processing', error: undefined } : d));
+      setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'processing' } : d));
 
       try {
         const result = await analyzeFinancialDocument(doc.fileRaw, reportingCurrency);
-        
-        // Manual amount logic: instead of throwing, we allow the document to complete but flag it
         setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'completed', data: result } : d));
       } catch (err: any) {
         setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'error', error: err.message } : d));
@@ -73,15 +61,10 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
       }
     };
 
-    while (currentIdx < pendingIndices.length && !stopProcessingRef.current) {
-      while (tasks.size < CONCURRENCY && currentIdx < pendingIndices.length) {
-        const idx = pendingIndices[currentIdx++];
-        const t = run(idx).finally(() => tasks.delete(t));
-        tasks.add(t);
-      }
-      await Promise.race(tasks);
+    for (const idx of pendingIndices) {
+      if (stopProcessingRef.current) break;
+      await run(idx);
     }
-    await Promise.all(tasks);
     setIsProcessing(false);
   };
 
@@ -103,175 +86,51 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
     }));
   };
 
-  const handleSummarize = async () => {
-    const completedDocs = documents.filter(d => d.status === 'completed' && d.data).map(d => d.data!);
-    if (completedDocs.length === 0) return;
-    
-    setIsSummarizing(true);
-    try {
-      const summary = await generateAuditSummary(completedDocs, reportingCurrency);
-      setAuditSummary(summary);
-    } catch (err: any) {
-      console.error(err);
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
-
   const invoices = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType !== DocumentType.BANK_STATEMENT), [documents]);
   const statements = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType === DocumentType.BANK_STATEMENT), [documents]);
 
   const invoiceSummary = useMemo(() => {
     const total = invoices.reduce((sum, doc) => sum + (doc.data?.amountInCHF || 0), 0);
     const totalVat = invoices.reduce((sum, doc) => sum + (doc.data?.vatAmount || 0), 0);
-    
-    const issuerMap: Record<string, { count: number, total: number }> = {};
-    invoices.forEach(inv => {
-      const issuer = inv.data?.issuer || 'Unknown Issuer';
-      if (!issuerMap[issuer]) issuerMap[issuer] = { count: 0, total: 0 };
-      issuerMap[issuer].count++;
-      issuerMap[issuer].total += (inv.data?.amountInCHF || 0);
-    });
-
-    return { total, totalVat, count: invoices.length, issuers: Object.entries(issuerMap).sort((a,b) => b[1].total - a[1].total) };
+    return { total, totalVat };
   }, [invoices]);
+
+  const handleExport = () => {
+    const dataToExport = invoices.map(inv => inv.data!);
+    exportToExcel(dataToExport, 'Audit_Ledger', reportingCurrency);
+  };
 
   return (
     <div className="space-y-10">
-      {/* Action Header */}
       <div className="bg-white p-8 rounded-sm shadow-sm border border-ypsom-alice grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
-        <div className="lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2">
            <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/10 rounded-sm cursor-pointer transition-all group">
-              <Upload className="w-8 h-8 mb-3 text-ypsom-slate group-hover:text-ypsom-deep transition-transform" />
-              <div className="text-center">
-                <p className="text-[11px] font-black uppercase tracking-widest text-ypsom-slate">Audit Evidence Submission</p>
-                <p className="text-[9px] text-ypsom-slate/60 mt-1 uppercase">PDF • JPG • PNG (Max 100+ files)</p>
-              </div>
+              <Upload className="w-8 h-8 mb-3 text-ypsom-slate group-hover:text-ypsom-deep" />
+              <p className="text-[11px] font-black uppercase tracking-widest text-ypsom-slate">Audit Evidence Submission</p>
               <input type="file" className="hidden" multiple onChange={(e) => e.target.files && addFiles(Array.from(e.target.files))} />
            </label>
         </div>
-
-        <div className="space-y-4">
-           <div>
-             <label className="block text-[10px] font-black uppercase tracking-widest text-ypsom-slate mb-2">Audit Currency</label>
-             <select 
-               value={reportingCurrency} 
-               onChange={(e) => setReportingCurrency(e.target.value)}
-               className="w-full h-12 bg-gray-50 border border-ypsom-alice rounded-sm px-4 text-xs font-bold text-ypsom-deep focus:outline-none focus:ring-1 focus:ring-ypsom-deep"
-             >
-               <option value="CHF">CHF (Swiss Franc)</option>
-               <option value="EUR">EUR (Euro)</option>
-               <option value="USD">USD (US Dollar)</option>
-               <option value="GBP">GBP (British Pound)</option>
-             </select>
-           </div>
-           
-           <button 
-             onClick={processAll} 
-             disabled={isProcessing || stats.total === 0}
-             className="w-full h-12 bg-ypsom-deep text-white rounded-sm font-black text-[11px] uppercase tracking-[0.2em] shadow-lg hover:bg-ypsom-shadow disabled:opacity-50 transition-all flex items-center justify-center"
+        <div>
+           <label className="block text-[10px] font-black uppercase tracking-widest text-ypsom-slate mb-2">Audit Currency</label>
+           <select 
+             value={reportingCurrency} 
+             onChange={(e) => setReportingCurrency(e.target.value)}
+             className="w-full h-12 bg-gray-50 border border-ypsom-alice rounded-sm px-4 text-xs font-bold text-ypsom-deep focus:ring-1 focus:ring-ypsom-deep outline-none"
            >
-             {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Run Extraction ({stats.total})</span>}
-           </button>
+             <option value="CHF">CHF (Swiss Franc)</option>
+             <option value="EUR">EUR (Euro)</option>
+             <option value="USD">USD (US Dollar)</option>
+           </select>
         </div>
-
-        <div className="space-y-4">
-           <div className="p-4 bg-gray-50 border border-ypsom-alice rounded-sm h-[112px] flex flex-col justify-center">
-              <div className="flex justify-between text-[11px] font-bold text-ypsom-deep mb-2">
-                <span>Done: {stats.completed}</span>
-                <span>Errors: {stats.errors}</span>
-              </div>
-              <div className="w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
-                <div className="h-full bg-ypsom-deep transition-all duration-700" style={{ width: `${stats.progress}%` }} />
-              </div>
-           </div>
-
-           <button 
-             onClick={handleSummarize}
-             disabled={isSummarizing || stats.completed === 0}
-             className="w-full h-12 bg-white border border-ypsom-deep text-ypsom-deep rounded-sm font-black text-[11px] uppercase tracking-[0.2em] hover:bg-ypsom-alice/20 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
-           >
-             {isSummarizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-             AI Summary Report
-           </button>
-        </div>
+        <button 
+          onClick={processAll} 
+          disabled={isProcessing || stats.total === 0}
+          className="h-12 bg-ypsom-deep text-white rounded-sm font-black text-[11px] uppercase tracking-[0.2em] shadow-lg hover:bg-ypsom-shadow disabled:opacity-50 flex items-center justify-center"
+        >
+          {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Start Audit ({stats.total})</span>}
+        </button>
       </div>
 
-      {/* Audit Queue Diagnostics */}
-      {documents.length > 0 && (
-        <div className="bg-white rounded-sm border border-ypsom-alice overflow-hidden shadow-sm">
-          <div className="px-6 py-4 bg-gray-50 border-b border-ypsom-alice flex justify-between items-center">
-             <h3 className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate flex items-center gap-2">
-               <Cpu className="w-4 h-4" /> Audit Feed
-             </h3>
-             <button onClick={() => setDocuments([])} className="text-[10px] font-bold text-red-600 hover:underline uppercase">Clear Queue</button>
-          </div>
-          <div className="max-h-80 overflow-y-auto custom-scrollbar">
-            <table className="min-w-full text-[11px]">
-              <thead className="bg-white sticky top-0 z-10 border-b border-ypsom-alice shadow-sm">
-                <tr className="text-left font-black text-ypsom-slate uppercase tracking-tighter">
-                  <th className="px-6 py-4 w-1/3">Full Document Filename</th>
-                  <th className="px-6 py-4 w-[15%]">Status</th>
-                  <th className="px-6 py-4">Diagnostic Result</th>
-                  <th className="px-6 py-4 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-ypsom-alice">
-                {documents.map(doc => (
-                  <tr key={doc.id} className={`${doc.status === 'error' ? 'bg-red-50' : 'hover:bg-gray-50/30'}`}>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <FileText className={`w-4 h-4 ${doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`} />
-                        <span className={`font-bold ${doc.status === 'error' ? 'text-red-700' : 'text-ypsom-deep'} break-all`}>{doc.fileName}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-2">
-                         {doc.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin text-ypsom-deep" />}
-                         {doc.status === 'error' && <AlertCircle className="w-3 h-3 text-red-600" />}
-                         {doc.status === 'completed' && doc.data?.totalAmount === 0 && <AlertCircle className="w-3 h-3 text-amber-500" />}
-                         <span className={`uppercase font-black text-[10px] ${doc.status === 'completed' ? (doc.data?.totalAmount === 0 ? 'text-amber-600' : 'text-green-600') : doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`}>
-                          {doc.status === 'completed' && doc.data?.totalAmount === 0 ? 'Review Needed' : doc.status}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      {doc.error ? (
-                        <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-sm text-red-700">
-                          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <div className="flex flex-col gap-1">
-                            <p className="font-black uppercase text-[9px] tracking-widest text-red-800">Critical Diagnostic Error</p>
-                            <p className="font-bold leading-relaxed text-[11px]">{doc.error}</p>
-                          </div>
-                        </div>
-                      ) : doc.status === 'completed' && doc.data?.totalAmount === 0 ? (
-                        <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-sm text-amber-800">
-                          <Edit3 className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                          <div className="flex flex-col gap-1">
-                            <p className="font-black uppercase text-[9px] tracking-widest text-amber-900">Manual Entry Required</p>
-                            <p className="font-bold leading-relaxed text-[11px]">AI could not resolve document amount. Please enter manually in the Ledger below.</p>
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="italic text-ypsom-slate opacity-60">
-                          {doc.status === 'completed' ? 'Audited successfully.' : doc.status === 'processing' ? 'Extracting visual artifacts...' : 'Queueing...'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                       <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))} className="p-2 text-ypsom-slate/40 hover:text-red-600">
-                         <Trash2 className="w-4 h-4" />
-                       </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* RESULTS: INVOICE LEDGER */}
       {invoices.length > 0 && (
         <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
            <div className="flex flex-col md:flex-row md:items-end justify-between border-b-2 border-ypsom-deep/20 pb-4 mb-6 gap-4">
@@ -281,23 +140,18 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
                 </h2>
                 <p className="text-[11px] text-ypsom-slate font-bold uppercase mt-1 opacity-60">Cumulative audit for fiscal reconciliation.</p>
               </div>
-              <div className="bg-ypsom-deep px-6 py-3 rounded-sm text-white shadow-xl flex items-center gap-8">
-                 <div className="flex items-center gap-4">
-                   <div className="p-2 bg-white/10 rounded-sm">
-                      <TrendingUp className="w-5 h-5 text-green-400" />
-                   </div>
-                   <div>
-                      <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Total Audited Volume</p>
-                      <p className="text-lg font-black font-mono">
-                        {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
-                      </p>
-                   </div>
-                 </div>
-                 <div className="border-l border-white/20 pl-8">
-                   <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Audited VAT Total</p>
-                   <p className="text-lg font-black font-mono text-alice">
-                     {invoiceSummary.totalVat.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
-                   </p>
+              <div className="flex items-center gap-4">
+                 <button 
+                   onClick={handleExport}
+                   className="h-12 px-6 bg-white border border-ypsom-deep text-ypsom-deep rounded-sm font-black text-[11px] uppercase tracking-[0.2em] hover:bg-ypsom-alice/20 flex items-center gap-2"
+                 >
+                   <FileSpreadsheet className="w-4 h-4" /> Export Ledger (.xlsx)
+                 </button>
+                 <div className="bg-ypsom-deep px-6 py-3 rounded-sm text-white shadow-xl flex items-center gap-8">
+                    <div>
+                      <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Audited Volume</p>
+                      <p className="text-lg font-black font-mono">{invoiceSummary.total.toLocaleString()} <span className="text-xs">{reportingCurrency}</span></p>
+                    </div>
                  </div>
               </div>
            </div>
@@ -307,141 +161,52 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
                <thead className="bg-ypsom-shadow text-white uppercase tracking-widest font-black">
                  <tr>
                    <th className="px-6 py-5 text-left">Date</th>
-                   <th className="px-6 py-5 text-left">Filename</th>
-                   <th className="px-6 py-5 text-left">Entity / Issuer</th>
+                   <th className="px-6 py-5 text-left">Entity</th>
                    <th className="px-6 py-5 text-right">Original Value</th>
                    <th className="px-6 py-5 text-right">VAT</th>
-                   <th className="px-6 py-5 text-right">Audited Sum ({reportingCurrency})</th>
+                   <th className="px-6 py-5 text-right bg-ypsom-deep/5">Audited Sum ({reportingCurrency})</th>
                  </tr>
                </thead>
                <tbody className="divide-y divide-ypsom-alice">
                  {invoices.map(doc => {
-                   const isManualNeeded = (doc.data?.totalAmount === 0);
+                   const needsReview = doc.data?.totalAmount === 0;
                    return (
-                     <tr key={doc.id} className="hover:bg-ypsom-alice/5 transition-colors">
-                       <td className="px-6 py-5 font-mono text-ypsom-slate whitespace-nowrap">{doc.data!.date}</td>
-                       <td className="px-6 py-5">
-                         <span className="text-[10px] font-mono text-ypsom-slate/70 truncate max-w-[120px] inline-block">{doc.fileName}</span>
-                       </td>
+                     <tr key={doc.id} className="hover:bg-ypsom-alice/5">
+                       <td className="px-6 py-5 font-mono text-ypsom-slate">{doc.data!.date}</td>
                        <td className="px-6 py-5">
                           <div className="flex flex-col">
                              <span className="font-black text-ypsom-deep text-sm">{doc.data!.issuer}</span>
-                             <span className="text-[9px] font-bold text-ypsom-slate uppercase tracking-tighter opacity-40">Ref: {doc.data!.documentNumber || 'N/A'}</span>
+                             <span className="text-[9px] font-bold text-ypsom-slate uppercase opacity-40">{doc.fileName}</span>
                           </div>
                        </td>
                        <td className="px-6 py-5 text-right">
-                         <div className="flex flex-col items-end">
-                            {isManualNeeded ? (
-                              <div className="relative">
-                                <input 
-                                  type="number"
-                                  placeholder="Enter Amount"
-                                  className="w-28 text-right px-2 py-1 border-2 border-amber-300 rounded-sm bg-amber-50 font-bold text-ypsom-deep focus:outline-none focus:ring-1 focus:ring-amber-500 text-xs"
-                                  onChange={(e) => handleManualAmountChange(doc.id, e.target.value)}
-                                />
-                                <span className="absolute -top-4 right-0 text-[8px] font-black text-amber-600 uppercase tracking-widest">Action Required</span>
-                              </div>
-                            ) : (
-                              <span className="font-bold text-ypsom-slate">
-                                {doc.data!.totalAmount.toLocaleString()} <span className="text-[9px] opacity-60 font-black">{doc.data!.originalCurrency}</span>
-                              </span>
-                            )}
-                         </div>
+                          {needsReview ? (
+                            <div className="relative inline-block">
+                               <input 
+                                 type="number" 
+                                 placeholder="Enter Amount"
+                                 className="w-32 text-right px-2 py-1 border-2 border-amber-300 bg-amber-50 rounded-sm font-bold text-ypsom-deep outline-none focus:ring-1 focus:ring-amber-500"
+                                 onChange={(e) => handleManualAmountChange(doc.id, e.target.value)}
+                               />
+                               <span className="absolute -top-4 right-0 text-[8px] font-black text-amber-600 uppercase">Action Needed</span>
+                            </div>
+                          ) : (
+                            <span className="font-bold text-ypsom-slate">
+                              {doc.data!.totalAmount.toLocaleString()} <span className="text-[9px] opacity-60">{doc.data!.originalCurrency}</span>
+                            </span>
+                          )}
                        </td>
-                       <td className="px-6 py-5 text-right text-ypsom-slate/60 font-mono">
-                         {doc.data!.vatAmount?.toLocaleString(undefined, { minimumFractionDigits: 2 }) || '0.00'}
+                       <td className="px-6 py-5 text-right font-mono text-ypsom-slate/60">
+                         {doc.data!.vatAmount?.toFixed(2) || '0.00'}
                        </td>
-                       <td className="px-6 py-5 text-right font-black text-ypsom-deep text-sm bg-ypsom-alice/5">
+                       <td className="px-6 py-5 text-right font-black text-ypsom-deep text-sm bg-ypsom-alice/10">
                           {doc.data!.amountInCHF.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
                        </td>
                      </tr>
                    );
                  })}
                </tbody>
-               <tfoot className="bg-ypsom-alice/20 border-t-2 border-ypsom-alice font-black">
-                  <tr>
-                    <td colSpan={5} className="px-6 py-5 text-right text-ypsom-slate uppercase tracking-widest">Grand Total Audited:</td>
-                    <td className="px-6 py-5 text-right text-lg text-ypsom-deep font-mono">
-                       {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
-                    </td>
-                  </tr>
-               </tfoot>
              </table>
-           </div>
-        </div>
-      )}
-
-      {/* BANK STATEMENTS SECTION */}
-      {statements.length > 0 && (
-        <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
-           <div className="flex justify-between items-end border-b-2 border-amber-300 pb-4 mb-6">
-              <h2 className="text-xl font-black text-amber-900 uppercase tracking-widest flex items-center gap-3">
-                <Database className="w-6 h-6" /> Bank Flow Reconciler
-              </h2>
-           </div>
-           
-           <div className="bg-white rounded-sm shadow-xl border border-amber-200 overflow-hidden">
-              <table className="min-w-full text-[12px]">
-                <thead className="bg-amber-800 text-white uppercase tracking-widest font-black">
-                  <tr>
-                    <th className="px-6 py-5 w-12"></th>
-                    <th className="px-6 py-5 text-left">Period</th>
-                    <th className="px-6 py-5 text-left">Financial Institution</th>
-                    <th className="px-6 py-5 text-right">Closing Flow</th>
-                    <th className="px-6 py-5 text-right">Currency</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-amber-100">
-                  {statements.map(doc => {
-                    const isOpen = expandedId === doc.id;
-                    return (
-                      <React.Fragment key={doc.id}>
-                        <tr className="hover:bg-amber-50/50 transition-colors bg-amber-50/10">
-                          <td className="px-6 py-5">
-                            <button onClick={() => setExpandedId(isOpen ? null : doc.id)} className="p-2 hover:bg-amber-200 rounded-sm">
-                              {isOpen ? <ChevronDown className="w-5 h-5 text-amber-700" /> : <ChevronRight className="w-5 h-5 text-amber-700" />}
-                            </button>
-                          </td>
-                          <td className="px-6 py-5 font-mono font-bold text-amber-900">{doc.data!.date}</td>
-                          <td className="px-6 py-5 font-black text-amber-950 uppercase">{doc.data!.issuer}</td>
-                          <td className="px-6 py-5 text-right font-black text-amber-900">
-                             {doc.data!.totalAmount.toLocaleString()}
-                          </td>
-                          <td className="px-6 py-5 text-right font-black text-amber-700/60 uppercase">{doc.data!.originalCurrency}</td>
-                        </tr>
-                        {isOpen && (
-                          <tr>
-                            <td colSpan={5} className="bg-amber-50/50 px-12 py-8 border-y border-amber-100">
-                               <div className="bg-white rounded-sm border border-amber-200 shadow-xl overflow-hidden animate-in slide-in-from-top-4">
-                                  <table className="min-w-full text-[11px]">
-                                     <thead className="bg-white text-amber-900 font-black uppercase border-b border-amber-100 shadow-sm">
-                                        <tr>
-                                           <th className="px-6 py-3 text-left">Date</th>
-                                           <th className="px-6 py-3 text-left">Description</th>
-                                           <th className="px-6 py-3 text-right">Amount</th>
-                                        </tr>
-                                     </thead>
-                                     <tbody className="divide-y divide-amber-50">
-                                        {doc.data!.lineItems?.map((t, i) => (
-                                          <tr key={i} className="hover:bg-amber-50/50">
-                                             <td className="px-6 py-3 font-mono text-amber-700">{t.date}</td>
-                                             <td className="px-6 py-3 font-bold text-amber-950">{t.description}</td>
-                                             <td className={`px-6 py-3 text-right font-mono font-black ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-700'}`}>
-                                                {t.type === 'INCOME' ? '+' : '-'}{t.amount.toLocaleString()}
-                                             </td>
-                                          </tr>
-                                        ))}
-                                     </tbody>
-                                  </table>
-                               </div>
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    );
-                  })}
-                </tbody>
-              </table>
            </div>
         </div>
       )}

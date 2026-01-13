@@ -15,6 +15,21 @@ export const fileToBase64 = (file: Blob): Promise<string> => {
   });
 };
 
+/**
+ * Fetches real-time exchange rates as a fallback/verification for AI extraction.
+ */
+export const getLiveExchangeRate = async (from: string, to: string): Promise<number> => {
+  if (from === to) return 1.0;
+  try {
+    const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`);
+    const data = await res.json();
+    return data.rates[to] || 1.0;
+  } catch (e) {
+    console.error("Currency API failure, falling back to AI estimation", e);
+    return 1.0;
+  }
+};
+
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
   try {
     return await fn();
@@ -45,16 +60,16 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         date: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
         issuer: { 
           type: Type.STRING, 
-          description: "The business brand name. Ignore 'Eat In', 'Table', etc." 
+          description: "The business brand name. Ignore operational labels." 
         },
         documentNumber: { type: Type.STRING },
-        totalAmount: { type: Type.NUMBER },
+        totalAmount: { type: Type.NUMBER, description: "Set to 0 if not detectable or blurred." },
         originalCurrency: { type: Type.STRING },
         vatAmount: { type: Type.NUMBER },
         netAmount: { type: Type.NUMBER },
         expenseCategory: { type: Type.STRING },
-        amountInCHF: { type: Type.NUMBER },
-        conversionRateUsed: { type: Type.NUMBER },
+        amountInCHF: { type: Type.NUMBER, description: `The total amount converted to ${targetCurrency}` },
+        conversionRateUsed: { type: Type.NUMBER, description: `The exchange rate used to convert to ${targetCurrency}` },
         notes: { type: Type.STRING },
         lineItems: {
           type: Type.ARRAY,
@@ -65,7 +80,7 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
               description: { type: Type.STRING },
               amount: { type: Type.NUMBER },
               type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
-              category: { type: Type.STRING, description: "e.g. Salary, Rent, Groceries, Shopping, Travel, Health" }
+              category: { type: Type.STRING }
             },
             required: ["date", "description", "amount", "type", "category"]
           }
@@ -81,16 +96,21 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
           { inlineData: { mimeType: mimeType, data: base64 } },
           {
             text: `Extract structured data from "${fullFileName}". 
-            If it's a Bank Statement: extract EVERY transaction accurately. 
-            Assign each transaction a category (Salary, Rent, Groceries, Utility, etc.).
-            Maintain the table structure from the document.
-            Ensure the issuer name is the bank's name or the vendor's name, not operational labels.`
+            
+            ACCURACY INSTRUCTIONS:
+            1. Detect original currency and total amount. If blurred/missing, return totalAmount: 0.
+            2. Convert to ${targetCurrency}. Use current market rates if not found on page.
+            3. Explicitly look for tax/VAT amounts.
+            4. If it's a Bank Statement, extract all transactions individually.
+            
+            Use Google Search to verify the exchange rate for the document date if possible.`
           }
         ]
       },
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema
+        responseSchema: schema,
+        tools: [{ googleSearch: {} }]
       }
     });
 
@@ -99,8 +119,12 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
     
     const parsed = JSON.parse(text) as FinancialData;
 
-    if (!parsed.amountInCHF) parsed.amountInCHF = parsed.totalAmount;
-    if (!parsed.conversionRateUsed) parsed.conversionRateUsed = 1;
+    // Safety fallback for conversions
+    if (!parsed.amountInCHF && parsed.totalAmount > 0) {
+      const liveRate = await getLiveExchangeRate(parsed.originalCurrency || 'EUR', targetCurrency);
+      parsed.amountInCHF = parsed.totalAmount * liveRate;
+      parsed.conversionRateUsed = liveRate;
+    }
 
     return parsed;
   });
@@ -146,7 +170,7 @@ export const analyzeBankStatement = async (file: File, targetCurrency: string = 
       contents: {
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
-          { text: "Precisely extract all transactions from this bank statement into the requested JSON format." }
+          { text: `Extract bank transactions into JSON. Convert amounts to relative ${targetCurrency} if necessary.` }
         ]
       },
       config: {
@@ -161,20 +185,13 @@ export const analyzeBankStatement = async (file: File, targetCurrency: string = 
   });
 };
 
-/**
- * Generates an executive summary of all processed documents.
- */
 export const generateAuditSummary = async (data: FinancialData[], currency: string): Promise<string> => {
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   const context = JSON.stringify(data);
   
   const response = await ai.models.generateContent({
     model: 'gemini-3-flash-preview',
-    contents: `Based on the following audit data, provide a professional executive summary of all expenses and receipts. 
-    Highlight the total spending in ${currency}, the major categories of expenditure, any notable trends, and a breakdown of high-value items.
-    Use Markdown for formatting.
-    
-    Audit Data: ${context}`
+    contents: `Analyze this audit data and provide a professional executive summary in ${currency}. Use Markdown.`
   });
   
   return response.text || "Summary generation failed.";
