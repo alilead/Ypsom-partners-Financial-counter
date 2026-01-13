@@ -2,9 +2,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { DocumentType, FinancialData, BankStatementAnalysis, BankTransaction } from "../types";
 
-/**
- * Helper to convert Blob/File to Base64
- */
 export const fileToBase64 = (file: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -18,9 +15,6 @@ export const fileToBase64 = (file: Blob): Promise<string> => {
   });
 };
 
-/**
- * Utility for exponential backoff retries.
- */
 const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> => {
   try {
     return await fn();
@@ -33,10 +27,6 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
   }
 };
 
-/**
- * Analyzes a financial document using Gemini 3.0 Flash.
- * Optimized for high-accuracy extraction with filename context.
- */
 export const analyzeFinancialDocument = async (file: File, targetCurrency: string = 'CHF'): Promise<FinancialData> => {
   const base64 = await fileToBase64(file);
   const mimeType = file.type;
@@ -53,14 +43,17 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
           enum: [DocumentType.INVOICE, DocumentType.RECEIPT, DocumentType.BANK_STATEMENT, DocumentType.UNKNOWN]
         },
         date: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
-        issuer: { type: Type.STRING },
+        issuer: { 
+          type: Type.STRING, 
+          description: "The business brand name. Ignore 'Eat In', 'Table', etc." 
+        },
         documentNumber: { type: Type.STRING },
         totalAmount: { type: Type.NUMBER },
-        originalCurrency: { type: Type.STRING, description: "ISO code found on document" },
+        originalCurrency: { type: Type.STRING },
         vatAmount: { type: Type.NUMBER },
         netAmount: { type: Type.NUMBER },
         expenseCategory: { type: Type.STRING },
-        amountInCHF: { type: Type.NUMBER, description: "Converted amount to target currency" },
+        amountInCHF: { type: Type.NUMBER },
         conversionRateUsed: { type: Type.NUMBER },
         notes: { type: Type.STRING },
         lineItems: {
@@ -71,9 +64,10 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
               date: { type: Type.STRING },
               description: { type: Type.STRING },
               amount: { type: Type.NUMBER },
-              type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] }
+              type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
+              category: { type: Type.STRING, description: "e.g. Salary, Rent, Groceries, Shopping, Travel, Health" }
             },
-            required: ["date", "description", "amount", "type"]
+            required: ["date", "description", "amount", "type", "category"]
           }
         }
       },
@@ -86,13 +80,11 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
           {
-            text: `Audit Request: Extract structured financial data from this file: "${fullFileName}".
-            Instructions:
-            1. Precisely identify if it is an Invoice, Receipt, or Bank Statement.
-            2. Preserve the Original Currency found on the document.
-            3. If it's a Bank Statement, extract EVERY single transaction into 'lineItems'.
-            4. Convert the total sum to ${targetCurrency} using standard rates.
-            5. If document is illegible or not financial, return totalAmount: 0 and notes: "NO_DATA_DETECTED".`
+            text: `Extract structured data from "${fullFileName}". 
+            If it's a Bank Statement: extract EVERY transaction accurately. 
+            Assign each transaction a category (Salary, Rent, Groceries, Utility, etc.).
+            Maintain the table structure from the document.
+            Ensure the issuer name is the bank's name or the vendor's name, not operational labels.`
           }
         ]
       },
@@ -103,20 +95,10 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
     });
 
     const text = response.text;
-    if (!text) throw new Error("AI Engine: No response payload.");
+    if (!text) throw new Error("AI Engine failure.");
     
     const parsed = JSON.parse(text) as FinancialData;
 
-    // Strict Validation
-    if (parsed.notes === "NO_DATA_DETECTED" || (parsed.totalAmount === 0 && parsed.documentType !== DocumentType.BANK_STATEMENT)) {
-      throw new Error("Validation Failure: No legible financial amounts found. Please check document quality.");
-    }
-
-    if (!parsed.date || parsed.date.toLowerCase().includes("unknown")) {
-      throw new Error("Validation Failure: Transaction date could not be determined.");
-    }
-
-    // Default Fallbacks
     if (!parsed.amountInCHF) parsed.amountInCHF = parsed.totalAmount;
     if (!parsed.conversionRateUsed) parsed.conversionRateUsed = 1;
 
@@ -124,18 +106,76 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
   });
 };
 
-export const analyzeBankStatement = async (f: File, targetCurrency: string = 'CHF'): Promise<BankStatementAnalysis> => {
-  const financialData = await analyzeFinancialDocument(f, targetCurrency);
-  const transactions = financialData.lineItems || [];
+export const analyzeBankStatement = async (file: File, targetCurrency: string = 'CHF'): Promise<BankStatementAnalysis> => {
+  const base64 = await fileToBase64(file);
+  const mimeType = file.type;
+
+  return withRetry(async () => {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    
+    const schema = {
+      type: Type.OBJECT,
+      properties: {
+        accountHolder: { type: Type.STRING },
+        period: { type: Type.STRING },
+        currency: { type: Type.STRING },
+        transactions: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              date: { type: Type.STRING },
+              description: { type: Type.STRING },
+              amount: { type: Type.NUMBER },
+              type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
+              category: { type: Type.STRING }
+            },
+            required: ["date", "description", "amount", "type", "category"]
+          }
+        },
+        calculatedTotalIncome: { type: Type.NUMBER },
+        calculatedTotalExpense: { type: Type.NUMBER },
+        openingBalance: { type: Type.NUMBER },
+        closingBalance: { type: Type.NUMBER }
+      },
+      required: ["accountHolder", "period", "currency", "transactions"]
+    };
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: {
+        parts: [
+          { inlineData: { mimeType: mimeType, data: base64 } },
+          { text: "Precisely extract all transactions from this bank statement into the requested JSON format." }
+        ]
+      },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: schema
+      }
+    });
+
+    const text = response.text;
+    if (!text) throw new Error("AI Engine failure.");
+    return JSON.parse(text) as BankStatementAnalysis;
+  });
+};
+
+/**
+ * Generates an executive summary of all processed documents.
+ */
+export const generateAuditSummary = async (data: FinancialData[], currency: string): Promise<string> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const context = JSON.stringify(data);
   
-  return {
-    accountHolder: financialData.issuer,
-    period: financialData.date,
-    currency: financialData.originalCurrency,
-    transactions: transactions,
-    calculatedTotalIncome: transactions.filter(t => t.type === 'INCOME').reduce((sum, t) => sum + t.amount, 0),
-    calculatedTotalExpense: transactions.filter(t => t.type === 'EXPENSE').reduce((sum, t) => sum + t.amount, 0),
-    openingBalance: 0,
-    closingBalance: financialData.totalAmount
-  };
+  const response = await ai.models.generateContent({
+    model: 'gemini-3-flash-preview',
+    contents: `Based on the following audit data, provide a professional executive summary of all expenses and receipts. 
+    Highlight the total spending in ${currency}, the major categories of expenditure, any notable trends, and a breakdown of high-value items.
+    Use Markdown for formatting.
+    
+    Audit Data: ${context}`
+  });
+  
+  return response.text || "Summary generation failed.";
 };

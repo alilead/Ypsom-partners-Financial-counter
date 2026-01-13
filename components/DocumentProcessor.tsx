@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3 } from 'lucide-react';
-import { analyzeFinancialDocument } from '../services/geminiService';
+import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3, FileSearch, Sparkles } from 'lucide-react';
+import { analyzeFinancialDocument, generateAuditSummary } from '../services/geminiService';
 import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType } from '../types';
 
@@ -12,6 +12,8 @@ interface DocumentProcessorProps {
 
 export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents, setDocuments }) => {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
+  const [auditSummary, setAuditSummary] = useState<string | null>(null);
   const [reportingCurrency, setReportingCurrency] = useState('CHF');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeWorkerCount, setActiveWorkerCount] = useState(0);
@@ -27,7 +29,6 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
 
   const addFiles = (files: File[]) => {
     const newDocs: ProcessedDocument[] = Array.from(files).map(f => {
-      // Duplicate detection: check filename AND size to be sure
       const isDuplicate = documents.some(doc => doc.fileName === f.name && doc.fileRaw?.size === f.size);
       
       return {
@@ -82,6 +83,21 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
     setIsProcessing(false);
   };
 
+  const handleSummarize = async () => {
+    const completedDocs = documents.filter(d => d.status === 'completed' && d.data).map(d => d.data!);
+    if (completedDocs.length === 0) return;
+    
+    setIsSummarizing(true);
+    try {
+      const summary = await generateAuditSummary(completedDocs, reportingCurrency);
+      setAuditSummary(summary);
+    } catch (err: any) {
+      console.error(err);
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   const invoices = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType !== DocumentType.BANK_STATEMENT), [documents]);
   const statements = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType === DocumentType.BANK_STATEMENT), [documents]);
 
@@ -93,9 +109,9 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
   return (
     <div className="space-y-10">
       {/* Action Header */}
-      <div className="bg-white p-8 rounded-sm shadow-sm border border-ypsom-alice grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
-        <div className="md:col-span-2 space-y-4">
-           <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/10 rounded-sm cursor-pointer transition-all group">
+      <div className="bg-white p-8 rounded-sm shadow-sm border border-ypsom-alice grid grid-cols-1 lg:grid-cols-4 gap-8 items-start">
+        <div className="lg:col-span-2 space-y-4">
+           <label className="flex flex-col items-center justify-center h-40 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/10 rounded-sm cursor-pointer transition-all group">
               <Upload className="w-8 h-8 mb-3 text-ypsom-slate group-hover:text-ypsom-deep transition-transform" />
               <div className="text-center">
                 <p className="text-[11px] font-black uppercase tracking-widest text-ypsom-slate">Audit Evidence Submission</p>
@@ -106,35 +122,67 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
         </div>
 
         <div className="space-y-4">
+           <div>
+             <label className="block text-[10px] font-black uppercase tracking-widest text-ypsom-slate mb-2">Audit Currency</label>
+             <select 
+               value={reportingCurrency} 
+               onChange={(e) => setReportingCurrency(e.target.value)}
+               className="w-full h-12 bg-gray-50 border border-ypsom-alice rounded-sm px-4 text-xs font-bold text-ypsom-deep focus:outline-none focus:ring-1 focus:ring-ypsom-deep"
+             >
+               <option value="CHF">CHF (Swiss Franc)</option>
+               <option value="EUR">EUR (Euro)</option>
+               <option value="USD">USD (US Dollar)</option>
+               <option value="GBP">GBP (British Pound)</option>
+             </select>
+           </div>
+           
            <button 
              onClick={processAll} 
              disabled={isProcessing || stats.total === 0}
-             className="w-full h-16 bg-ypsom-deep text-white rounded-sm font-black text-[14px] uppercase tracking-[0.2em] shadow-lg hover:bg-ypsom-shadow disabled:opacity-50 transition-all flex items-center justify-center"
+             className="w-full h-12 bg-ypsom-deep text-white rounded-sm font-black text-[11px] uppercase tracking-[0.2em] shadow-lg hover:bg-ypsom-shadow disabled:opacity-50 transition-all flex items-center justify-center"
            >
-             {isProcessing ? (
-               <div className="flex items-center gap-3">
-                 <Loader2 className="w-5 h-5 animate-spin" />
-                 Extracting...
-               </div>
-             ) : (
-               <span>Run ({stats.total})</span>
-             )}
+             {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>Run Extraction ({stats.total})</span>}
            </button>
-           
-           <div className="p-4 bg-white border border-ypsom-alice rounded-sm">
-              <div className="flex justify-between text-[10px] font-black text-ypsom-slate uppercase tracking-widest mb-2">
-                <span>Queue Flow</span>
-              </div>
-              <div className="flex justify-between text-[11px] font-bold text-ypsom-deep">
+        </div>
+
+        <div className="space-y-4">
+           <div className="p-4 bg-gray-50 border border-ypsom-alice rounded-sm h-[112px] flex flex-col justify-center">
+              <div className="flex justify-between text-[11px] font-bold text-ypsom-deep mb-2">
                 <span>Done: {stats.completed}</span>
                 <span>Errors: {stats.errors}</span>
               </div>
-              <div className="mt-2 w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
+              <div className="w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
                 <div className="h-full bg-ypsom-deep transition-all duration-700" style={{ width: `${stats.progress}%` }} />
               </div>
            </div>
+
+           <button 
+             onClick={handleSummarize}
+             disabled={isSummarizing || stats.completed === 0}
+             className="w-full h-12 bg-white border border-ypsom-deep text-ypsom-deep rounded-sm font-black text-[11px] uppercase tracking-[0.2em] hover:bg-ypsom-alice/20 disabled:opacity-30 transition-all flex items-center justify-center gap-2"
+           >
+             {isSummarizing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+             Summary
+           </button>
         </div>
       </div>
+
+      {/* AI Executive Summary Block */}
+      {auditSummary && (
+        <div className="bg-white rounded-sm border-l-4 border-ypsom-deep shadow-xl p-8 animate-in fade-in slide-in-from-top-4 duration-500">
+           <div className="flex justify-between items-center mb-6 border-b border-ypsom-alice pb-4">
+              <h3 className="text-sm font-black uppercase tracking-widest text-ypsom-deep flex items-center gap-3">
+                <Sparkles className="w-5 h-5" /> AI Executive Audit Summary
+              </h3>
+              <button onClick={() => setAuditSummary(null)} className="text-ypsom-slate hover:text-red-600">
+                <X className="w-4 h-4" />
+              </button>
+           </div>
+           <div className="prose prose-sm max-w-none text-ypsom-deep leading-relaxed font-medium">
+              <div dangerouslySetInnerHTML={{ __html: auditSummary.replace(/\n/g, '<br/>') }} />
+           </div>
+        </div>
+      )}
 
       {/* Audit Queue Diagnostics */}
       {documents.length > 0 && (

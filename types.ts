@@ -1,5 +1,4 @@
 
-
 export enum DocumentType {
   BANK_STATEMENT = 'Bank Statement',
   INVOICE = 'Invoice',
@@ -12,9 +11,8 @@ export interface BankTransaction {
   description: string;
   amount: number;
   type: 'INCOME' | 'EXPENSE';
-  category?: string;
-  supportingDocRef?: string; // Captured from handwritten circled numbers e.g. "(1)"
-  // Added optional notes to capture reconciliation or enrichment data
+  category: string; // e.g. Food, Salary, Rent, Utilities
+  supportingDocRef?: string;
   notes?: string;
 }
 
@@ -32,8 +30,7 @@ export interface FinancialData {
   conversionRateUsed: number;
   notes: string;
   lineItems?: BankTransaction[];
-  handwrittenRef?: string; // Captured from handwriting like "P.1-(1)"
-  // groundingUrls added to store search source URLs as required by Search Grounding guidelines
+  handwrittenRef?: string;
   groundingUrls?: string[]; 
 }
 
@@ -42,6 +39,18 @@ export interface ProcessedDocument {
   fileName: string;
   status: 'pending' | 'processing' | 'completed' | 'error';
   data?: FinancialData;
+  error?: string;
+  fileRaw?: File;
+}
+
+/**
+ * Fix: Added missing ProcessedBankStatement interface for bank-specific reconciliation workflows.
+ */
+export interface ProcessedBankStatement {
+  id: string;
+  fileName: string;
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  data?: BankStatementAnalysis;
   error?: string;
   fileRaw?: File;
 }
@@ -55,13 +64,4 @@ export interface BankStatementAnalysis {
   calculatedTotalExpense?: number;
   openingBalance?: number;
   closingBalance?: number;
-}
-
-export interface ProcessedBankStatement {
-  id: string;
-  fileName: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
-  data?: BankStatementAnalysis;
-  error?: string;
-  fileRaw?: File;
 }
