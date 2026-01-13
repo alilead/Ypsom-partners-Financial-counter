@@ -1,14 +1,9 @@
+
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, FileUp, AlertTriangle, Zap, Clock, ExternalLink, Cpu } from 'lucide-react';
+import { Upload, CheckCircle, XCircle, Loader2, Download, Trash2, Coins, AlertCircle, X, AlertTriangle, Zap, Clock, ExternalLink, Cpu, Ban, FileText, ChevronDown, ChevronRight, Database, ReceiptText, TrendingUp, BarChart3 } from 'lucide-react';
 import { analyzeFinancialDocument } from '../services/geminiService';
 import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType } from '../types';
-
-interface Notification {
-  id: string;
-  message: string;
-  type: 'warning' | 'error' | 'success';
-}
 
 interface DocumentProcessorProps {
   documents: ProcessedDocument[];
@@ -18,69 +13,32 @@ interface DocumentProcessorProps {
 export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents, setDocuments }) => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [reportingCurrency, setReportingCurrency] = useState('CHF');
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [isDragging, setIsDragging] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [activeWorkerCount, setActiveWorkerCount] = useState(0);
-  const dragCounter = useRef(0);
   const stopProcessingRef = useRef(false);
 
   const stats = useMemo(() => {
     const total = documents.length;
     const completed = documents.filter(d => d.status === 'completed').length;
     const errors = documents.filter(d => d.status === 'error').length;
-    const pending = documents.filter(d => d.status === 'pending' || d.status === 'processing').length;
-    const processing = documents.filter(d => d.status === 'processing').length;
     const progress = total > 0 ? (completed / total) * 100 : 0;
-    
-    // Improved time estimation for large batches
-    // Assuming 18s per file average / 5 workers = 3.6s per file throughput
-    const remainingCount = documents.filter(d => d.status === 'pending').length;
-    const estRemainingSeconds = (remainingCount * 18) / 5;
-    const minutes = Math.floor(estRemainingSeconds / 60);
-    const seconds = Math.floor(estRemainingSeconds % 60);
-    
-    return { 
-      total, completed, pending, progress, errors, processing,
-      timeStr: remainingCount > 0 ? `${minutes}m ${seconds}s` : 'Finishing...' 
-    };
+    return { total, completed, progress, errors };
   }, [documents]);
 
-  const addNotification = (message: string, type: 'warning' | 'error' | 'success' = 'warning') => {
-    const id = Math.random().toString(36).substring(7);
-    setNotifications(prev => [...prev, { id, message, type }]);
-    setTimeout(() => {
-      setNotifications(prev => prev.filter(n => n.id !== id));
-    }, 5000);
-  };
-
-  const removeFile = (id: string) => {
-    if (isProcessing) return;
-    setDocuments(prev => prev.filter(d => d.id !== id));
-  };
-
   const addFiles = (files: File[]) => {
-    const newValidFiles: ProcessedDocument[] = [];
-    files.forEach(file => {
-      const isDuplicate = documents.some(d => d.fileName === file.name && d.fileRaw?.size === file.size);
-      if (!isDuplicate) {
-        newValidFiles.push({
-          id: Math.random().toString(36).substr(2, 9), 
-          fileName: file.name, 
-          status: 'pending' as const, 
-          fileRaw: file
-        });
-      }
+    const newDocs: ProcessedDocument[] = Array.from(files).map(f => {
+      // Duplicate detection: check filename AND size to be sure
+      const isDuplicate = documents.some(doc => doc.fileName === f.name && doc.fileRaw?.size === f.size);
+      
+      return {
+        id: Math.random().toString(36).substr(2, 9),
+        fileName: f.name,
+        status: isDuplicate ? 'error' : 'pending',
+        error: isDuplicate ? 'Duplicate File: This document has already been added to the queue.' : undefined,
+        fileRaw: f
+      };
     });
-    if (newValidFiles.length > 0) {
-      setDocuments(prev => [...prev, ...newValidFiles]);
-    }
-  };
-
-  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    if (event.target.files) {
-      addFiles(Array.from(event.target.files));
-      event.target.value = ''; 
-    }
+    setDocuments(prev => [...prev, ...newDocs]);
   };
 
   const processAll = async () => {
@@ -89,243 +47,295 @@ export const DocumentProcessor: React.FC<DocumentProcessorProps> = ({ documents,
     stopProcessingRef.current = false;
     
     const pendingIndices = documents
-      .map((d, i) => (d.status === 'pending' || d.status === 'error') ? i : -1)
+      .map((d, i) => (d.status === 'pending') ? i : -1)
       .filter(i => i !== -1);
 
-    if (pendingIndices.length === 0) {
-      setIsProcessing(false);
-      return;
-    }
+    const CONCURRENCY = 5;
+    let currentIdx = 0;
+    const tasks = new Set<Promise<void>>();
 
-    const CONCURRENCY_LIMIT = 5;
-    let indexInQueue = 0;
-    const activeTasks = new Set<Promise<void>>();
-
-    const runTask = async (docIndex: number) => {
-      const doc = documents[docIndex];
-      if (!doc || !doc.fileRaw || stopProcessingRef.current) return;
-
-      setDocuments(prev => prev.map((d, i) => i === docIndex ? { ...d, status: 'processing', error: undefined } : d));
+    const run = async (idx: number) => {
+      const doc = documents[idx];
+      if (!doc.fileRaw) return;
       setActiveWorkerCount(prev => prev + 1);
+      setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'processing', error: undefined } : d));
 
       try {
         const result = await analyzeFinancialDocument(doc.fileRaw, reportingCurrency);
-        setDocuments(prev => prev.map((d, i) => i === docIndex ? { ...d, status: 'completed', data: result } : d));
+        setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'completed', data: result } : d));
       } catch (err: any) {
-        setDocuments(prev => prev.map((d, i) => i === docIndex ? { ...d, status: 'error', error: err.message } : d));
-        addNotification(`${doc.fileName}: ${err.message}`, 'error');
+        setDocuments(prev => prev.map((d, i) => i === idx ? { ...d, status: 'error', error: err.message } : d));
       } finally {
-        setActiveWorkerCount(prev => Math.max(0, prev - 1));
+        setActiveWorkerCount(prev => prev - 1);
       }
     };
 
-    while (indexInQueue < pendingIndices.length && !stopProcessingRef.current) {
-      while (activeTasks.size < CONCURRENCY_LIMIT && indexInQueue < pendingIndices.length) {
-        const docIndex = pendingIndices[indexInQueue++];
-        const task = runTask(docIndex).finally(() => activeTasks.delete(task));
-        activeTasks.add(task);
+    while (currentIdx < pendingIndices.length && !stopProcessingRef.current) {
+      while (tasks.size < CONCURRENCY && currentIdx < pendingIndices.length) {
+        const idx = pendingIndices[currentIdx++];
+        const t = run(idx).finally(() => tasks.delete(t));
+        tasks.add(t);
       }
-      if (activeTasks.size > 0) {
-        await Promise.race(activeTasks);
-      }
+      await Promise.race(tasks);
     }
-
-    await Promise.all(activeTasks);
+    await Promise.all(tasks);
     setIsProcessing(false);
-    setActiveWorkerCount(0);
   };
 
+  const invoices = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType !== DocumentType.BANK_STATEMENT), [documents]);
+  const statements = useMemo(() => documents.filter(d => d.status === 'completed' && d.data?.documentType === DocumentType.BANK_STATEMENT), [documents]);
+
+  const invoiceSummary = useMemo(() => {
+    const total = invoices.reduce((sum, doc) => sum + (doc.data?.amountInCHF || 0), 0);
+    return { total, count: invoices.length };
+  }, [invoices]);
+
   return (
-    <div 
-      className={`space-y-6 relative transition-all duration-300 ${isDragging ? 'scale-[1.01]' : ''}`}
-      onDragEnter={(e) => { e.preventDefault(); dragCounter.current++; setIsDragging(true); }}
-      onDragLeave={() => { dragCounter.current--; if (dragCounter.current === 0) setIsDragging(false); }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); setIsDragging(false); dragCounter.current = 0; if (e.dataTransfer.files) addFiles(Array.from(e.dataTransfer.files)); }}
-    >
-      {/* Drag Overlay */}
-      {isDragging && (
-        <div className="absolute inset-0 z-[60] bg-ypsom-deep/10 border-4 border-dashed border-ypsom-deep rounded-sm flex flex-col items-center justify-center backdrop-blur-[2px] pointer-events-none animate-in fade-in duration-200">
-          <FileUp className="w-16 h-16 text-ypsom-deep mb-4 animate-bounce" />
-          <p className="text-xl font-bold text-ypsom-deep uppercase tracking-widest">Release to Upload</p>
+    <div className="space-y-10">
+      {/* Action Header */}
+      <div className="bg-white p-8 rounded-sm shadow-sm border border-ypsom-alice grid grid-cols-1 md:grid-cols-3 gap-8 items-start">
+        <div className="md:col-span-2 space-y-4">
+           <label className="flex flex-col items-center justify-center h-32 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/10 rounded-sm cursor-pointer transition-all group">
+              <Upload className="w-8 h-8 mb-3 text-ypsom-slate group-hover:text-ypsom-deep transition-transform" />
+              <div className="text-center">
+                <p className="text-[11px] font-black uppercase tracking-widest text-ypsom-slate">Audit Evidence Submission</p>
+                <p className="text-[9px] text-ypsom-slate/60 mt-1 uppercase">PDF • JPG • PNG (Max 100+ files)</p>
+              </div>
+              <input type="file" className="hidden" multiple onChange={(e) => e.target.files && addFiles(Array.from(e.target.files))} />
+           </label>
         </div>
-      )}
 
-      {/* Notifications */}
-      <div className="fixed top-24 right-6 z-[100] flex flex-col gap-3 pointer-events-none">
-        {notifications.map(n => (
-          <div key={n.id} className={`pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-sm shadow-xl border-l-4 animate-in slide-in-from-right duration-300 ${
-            n.type === 'warning' ? 'bg-amber-50 border-amber-500 text-amber-800' :
-            n.type === 'error' ? 'bg-red-50 border-red-500 text-red-800' : 'bg-green-50 border-green-500 text-green-800'
-          }`}>
-            <span className="text-xs font-bold">{n.message}</span>
-            <button onClick={() => setNotifications(prev => prev.filter(notif => notif.id !== n.id))}><X className="w-3 h-3" /></button>
-          </div>
-        ))}
-      </div>
-
-      <div className="bg-white p-6 rounded-sm shadow-sm border border-ypsom-alice flex flex-col gap-6">
-        {isProcessing && (
-          <div className="bg-ypsom-deep/5 p-5 rounded-sm border border-ypsom-alice/50 space-y-4 shadow-inner">
-            <div className="flex justify-between items-center">
+        <div className="space-y-4">
+           <button 
+             onClick={processAll} 
+             disabled={isProcessing || stats.total === 0}
+             className="w-full h-16 bg-ypsom-deep text-white rounded-sm font-black text-[14px] uppercase tracking-[0.2em] shadow-lg hover:bg-ypsom-shadow disabled:opacity-50 transition-all flex items-center justify-center"
+           >
+             {isProcessing ? (
                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-ypsom-deep rounded-sm animate-pulse">
-                    <Zap className="w-4 h-4 text-white" />
-                  </div>
-                  <div>
-                    <span className="text-[10px] font-black text-ypsom-deep uppercase tracking-widest block">Batch Analysis Active</span>
-                    <span className="text-[9px] font-bold text-ypsom-slate uppercase tracking-wider">{activeWorkerCount} of 5 Workers Running</span>
-                  </div>
+                 <Loader2 className="w-5 h-5 animate-spin" />
+                 Extracting...
                </div>
-               <div className="text-right">
-                  <div className="flex items-center gap-2 text-ypsom-slate justify-end">
-                    <Clock className="w-3 h-3" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">{stats.timeStr} remaining</span>
-                  </div>
-                  <span className="text-[9px] font-black text-ypsom-deep/40 uppercase tracking-tighter mt-1 block">Batch: {stats.total} files</span>
-               </div>
-            </div>
-            <div className="w-full h-2 bg-ypsom-alice rounded-full overflow-hidden">
-              <div className="h-full bg-ypsom-deep transition-all duration-700 ease-out" style={{ width: `${stats.progress}%` }} />
-            </div>
-            <div className="flex gap-1">
-              {[1, 2, 3, 4, 5].map((w) => (
-                <div key={w} className={`h-1 flex-1 rounded-full transition-colors duration-500 ${w <= activeWorkerCount ? 'bg-ypsom-deep animate-pulse' : 'bg-ypsom-alice'}`} />
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-col md:flex-row items-center gap-6">
-          <div className="w-full md:w-48">
-            <label className="block text-[10px] font-bold text-ypsom-slate uppercase tracking-wider mb-2">Target Currency</label>
-            <div className="relative">
-              <select 
-                value={reportingCurrency}
-                onChange={(e) => setReportingCurrency(e.target.value)}
-                className="w-full pl-8 pr-3 py-2 border border-ypsom-alice rounded-sm bg-white text-sm font-bold text-ypsom-deep outline-none focus:ring-1 focus:ring-ypsom-deep appearance-none"
-              >
-                <option value="CHF">CHF</option>
-                <option value="EUR">EUR</option>
-                <option value="USD">USD</option>
-              </select>
-              <Coins className="w-4 h-4 text-ypsom-slate absolute left-2.5 top-2.5 pointer-events-none" />
-            </div>
-          </div>
-
-          <label className="flex-1 w-full flex flex-col items-center justify-center h-24 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/20 rounded-sm cursor-pointer transition-all group">
-            <Upload className="w-5 h-5 mb-2 text-ypsom-slate group-hover:text-ypsom-deep transition-colors" />
-            <p className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate group-hover:text-ypsom-deep">Select Bulk Evidence (100+ files ok)</p>
-            <input type="file" className="hidden" multiple accept="image/*,application/pdf" onChange={handleFileUpload} />
-          </label>
-
-          <button 
-            onClick={processAll} 
-            disabled={isProcessing || (stats.pending === 0 && stats.errors === 0)} 
-            className="bg-ypsom-deep text-white px-10 py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md disabled:opacity-50 hover:bg-ypsom-shadow transition-all transform active:scale-95"
-          >
-            {isProcessing ? (
-              <span className="flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin" /> Analyzing...
-              </span>
-            ) : (
-              `Run Audit (${stats.total})`
-            )}
-          </button>
+             ) : (
+               <span>Run ({stats.total})</span>
+             )}
+           </button>
+           
+           <div className="p-4 bg-white border border-ypsom-alice rounded-sm">
+              <div className="flex justify-between text-[10px] font-black text-ypsom-slate uppercase tracking-widest mb-2">
+                <span>Queue Flow</span>
+              </div>
+              <div className="flex justify-between text-[11px] font-bold text-ypsom-deep">
+                <span>Done: {stats.completed}</span>
+                <span>Errors: {stats.errors}</span>
+              </div>
+              <div className="mt-2 w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
+                <div className="h-full bg-ypsom-deep transition-all duration-700" style={{ width: `${stats.progress}%` }} />
+              </div>
+           </div>
         </div>
-
-        {documents.length > 0 && (
-          <div className="pt-4 border-t border-ypsom-alice">
-            <h3 className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate mb-4 flex items-center gap-2">
-              <Cpu className="w-3 h-3" /> Processing Queue
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-              {documents.map(doc => (
-                <div key={doc.id} className={`p-3 rounded-sm border transition-all flex flex-col gap-1 ${
-                  doc.status === 'error' ? 'bg-red-50 border-red-200' : 
-                  doc.status === 'completed' ? 'bg-green-50 border-green-200' : 
-                  doc.status === 'processing' ? 'bg-ypsom-alice/30 border-ypsom-deep/30' : 'bg-gray-50 border-ypsom-alice'
-                }`}>
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="font-bold truncate max-w-[80px]" title={doc.fileName}>{doc.fileName}</span>
-                    {doc.status === 'processing' ? (
-                      <Loader2 className="w-3 h-3 animate-spin text-ypsom-deep" />
-                    ) : (
-                      <button onClick={() => removeFile(doc.id)} className="opacity-0 group-hover:opacity-100 transition-opacity">
-                        <Trash2 className="w-3 h-3 text-red-400 hover:text-red-600" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <span className={`text-[8px] font-black uppercase tracking-tighter ${
-                      doc.status === 'error' ? 'text-red-700' : 
-                      doc.status === 'completed' ? 'text-green-700' : 
-                      doc.status === 'processing' ? 'text-ypsom-deep' : 'text-ypsom-slate'
-                    }`}>
-                      {doc.status}
-                    </span>
-                    {doc.status === 'completed' && <CheckCircle className="w-2.5 h-2.5 text-green-600" />}
-                    {doc.status === 'error' && <AlertTriangle className="w-2.5 h-2.5 text-red-600" />}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
-      {stats.completed > 0 && (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          <div className="flex justify-between items-end border-b border-ypsom-alice pb-3">
-            <div>
-              <h2 className="text-lg font-bold text-ypsom-deep uppercase tracking-widest">Audit Ledger</h2>
-              <p className="text-[10px] text-ypsom-slate font-medium uppercase tracking-wider">{stats.completed} documents verified and grounded.</p>
-            </div>
-            <button onClick={() => exportToExcel(documents.filter(d => d.data).map(d => d.data!), 'Ypsom_Audit_Batch', reportingCurrency)} className="bg-ypsom-deep text-white px-6 py-2.5 rounded-sm font-bold text-[10px] uppercase tracking-widest shadow-md flex items-center hover:bg-ypsom-shadow transition-colors">
-               <Download className="w-4 h-4 mr-2" /> Download Batch XLSX
-            </button>
+      {/* Audit Queue Diagnostics */}
+      {documents.length > 0 && (
+        <div className="bg-white rounded-sm border border-ypsom-alice overflow-hidden shadow-sm">
+          <div className="px-6 py-4 bg-gray-50 border-b border-ypsom-alice flex justify-between items-center">
+             <h3 className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate flex items-center gap-2">
+               <Cpu className="w-4 h-4" /> Gemini 3.0 Audit Feed
+             </h3>
+             <button onClick={() => setDocuments([])} className="text-[10px] font-bold text-red-600 hover:underline uppercase">Clear Queue</button>
           </div>
-          <div className="bg-white rounded-sm shadow-md border border-ypsom-alice overflow-hidden">
-            <table className="min-w-full divide-y divide-ypsom-alice text-[11px]">
-              <thead className="bg-ypsom-shadow text-white uppercase tracking-wider">
-                <tr>
-                  <th className="px-4 py-4 text-left">Date</th>
-                  <th className="px-4 py-4 text-left">Issuer</th>
-                  <th className="px-4 py-4 text-right">Total ({reportingCurrency})</th>
-                  <th className="px-4 py-4 text-left">Evidence Sources</th>
+          <div className="max-h-80 overflow-y-auto custom-scrollbar">
+            <table className="min-w-full text-[11px]">
+              <thead className="bg-white sticky top-0 z-10 border-b border-ypsom-alice shadow-sm">
+                <tr className="text-left font-black text-ypsom-slate uppercase tracking-tighter">
+                  <th className="px-6 py-4 w-1/3">Full Document Filename</th>
+                  <th className="px-6 py-4 w-[15%]">Status</th>
+                  <th className="px-6 py-4">Diagnostic Result</th>
+                  <th className="px-6 py-4 text-right">Action</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y divide-ypsom-alice">
-                {documents.filter(d => d.data).map((doc) => (
-                  <tr key={doc.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-4 font-mono text-ypsom-slate">{doc.data!.date}</td>
-                    <td className="px-4 py-4 font-bold text-ypsom-deep">{doc.data!.issuer}</td>
-                    <td className="px-4 py-4 text-right font-bold font-mono text-ypsom-deep text-sm">{doc.data!.amountInCHF.toLocaleString('en-CH', {minimumFractionDigits: 2})}</td>
-                    <td className="px-4 py-4">
-                      {doc.data!.groundingUrls && doc.data!.groundingUrls.length > 0 ? (
-                        <div className="flex flex-wrap gap-2">
-                          {doc.data!.groundingUrls.slice(0, 2).map((url, i) => (
-                            <a 
-                              key={i} 
-                              href={url} 
-                              target="_blank" 
-                              rel="noopener noreferrer" 
-                              className="text-ypsom-deep hover:text-ypsom-shadow flex items-center gap-1 transition-colors bg-ypsom-alice/30 px-2 py-0.5 rounded-full"
-                            >
-                              <ExternalLink className="w-2 h-2" />
-                              <span className="text-[8px] font-black uppercase">Ref {i + 1}</span>
-                            </a>
-                          ))}
+              <tbody className="divide-y divide-ypsom-alice">
+                {documents.map(doc => (
+                  <tr key={doc.id} className={`${doc.status === 'error' ? 'bg-red-50/50' : 'hover:bg-gray-50/30'}`}>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-3">
+                        <FileText className={`w-4 h-4 ${doc.status === 'error' ? 'text-red-400' : 'text-ypsom-slate'}`} />
+                        <span className="font-bold text-ypsom-deep break-all">{doc.fileName}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2">
+                         {doc.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin text-ypsom-deep" />}
+                         <span className={`uppercase font-black text-[10px] ${doc.status === 'completed' ? 'text-green-600' : doc.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`}>
+                          {doc.status}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      {doc.error ? (
+                        <div className="flex items-start gap-3 p-3 bg-white border border-red-100 rounded-sm shadow-sm text-red-700">
+                          <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                          <p className="font-bold leading-relaxed">{doc.error}</p>
                         </div>
                       ) : (
-                        <span className="text-[9px] text-ypsom-slate italic uppercase opacity-40">Internal Only</span>
+                        <span className="italic text-ypsom-slate opacity-60">
+                          {doc.status === 'completed' ? 'Audited successfully.' : doc.status === 'processing' ? 'Extracting visual artifacts...' : 'Queueing...'}
+                        </span>
                       )}
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                       <button onClick={() => setDocuments(prev => prev.filter(d => d.id !== doc.id))} className="p-2 text-ypsom-slate/40 hover:text-red-600">
+                         <Trash2 className="w-4 h-4" />
+                       </button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {/* RESULTS: INVOICE LEDGER */}
+      {invoices.length > 0 && (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+           <div className="flex flex-col md:flex-row md:items-end justify-between border-b-2 border-ypsom-deep/20 pb-4 mb-6 gap-4">
+              <div>
+                <h2 className="text-xl font-black text-ypsom-deep uppercase tracking-widest flex items-center gap-3">
+                  <ReceiptText className="w-6 h-6" /> Invoice Ledger
+                </h2>
+                <p className="text-[11px] text-ypsom-slate font-bold uppercase mt-1 opacity-60">Cumulative audit for fiscal reconciliation.</p>
+              </div>
+              <div className="bg-ypsom-deep px-6 py-3 rounded-sm text-white shadow-xl flex items-center gap-4">
+                 <div className="p-2 bg-white/10 rounded-sm">
+                    <TrendingUp className="w-5 h-5 text-green-400" />
+                 </div>
+                 <div>
+                    <p className="text-[9px] font-black uppercase tracking-widest opacity-60">Total Audited Volume</p>
+                    <p className="text-lg font-black font-mono">
+                      {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })} <span className="text-xs">{reportingCurrency}</span>
+                    </p>
+                 </div>
+              </div>
+           </div>
+
+           <div className="bg-white rounded-sm shadow-xl border border-ypsom-alice overflow-hidden">
+             <table className="min-w-full text-[12px]">
+               <thead className="bg-ypsom-shadow text-white uppercase tracking-widest font-black">
+                 <tr>
+                   <th className="px-6 py-5 text-left">Date</th>
+                   <th className="px-6 py-5 text-left">Entity / Issuer</th>
+                   <th className="px-6 py-5 text-right">Original Value</th>
+                   <th className="px-6 py-5 text-right">Audited Sum ({reportingCurrency})</th>
+                 </tr>
+               </thead>
+               <tbody className="divide-y divide-ypsom-alice">
+                 {invoices.map(doc => (
+                   <tr key={doc.id} className="hover:bg-ypsom-alice/5 transition-colors">
+                     <td className="px-6 py-5 font-mono text-ypsom-slate">{doc.data!.date}</td>
+                     <td className="px-6 py-5">
+                        <div className="flex flex-col">
+                           <span className="font-black text-ypsom-deep text-sm">{doc.data!.issuer}</span>
+                           <span className="text-[9px] font-bold text-ypsom-slate uppercase tracking-tighter opacity-40">Ref: {doc.data!.documentNumber || 'N/A'}</span>
+                        </div>
+                     </td>
+                     <td className="px-6 py-5 text-right">
+                       <span className="font-bold text-ypsom-slate">
+                          {doc.data!.totalAmount.toLocaleString()} <span className="text-[9px] opacity-60 font-black">{doc.data!.originalCurrency}</span>
+                       </span>
+                     </td>
+                     <td className="px-6 py-5 text-right font-black text-ypsom-deep text-sm bg-ypsom-alice/5">
+                        {doc.data!.amountInCHF.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
+                     </td>
+                   </tr>
+                 ))}
+               </tbody>
+               <tfoot className="bg-ypsom-alice/20 border-t-2 border-ypsom-alice font-black">
+                  <tr>
+                    <td colSpan={3} className="px-6 py-5 text-right text-ypsom-slate uppercase tracking-widest">Grand Total Audited:</td>
+                    <td className="px-6 py-5 text-right text-lg text-ypsom-deep font-mono">
+                       {invoiceSummary.total.toLocaleString('en-CH', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+               </tfoot>
+             </table>
+           </div>
+        </div>
+      )}
+
+      {/* BANK STATEMENTS SECTION */}
+      {statements.length > 0 && (
+        <div className="animate-in fade-in slide-in-from-bottom-4 duration-700">
+           <div className="flex justify-between items-end border-b-2 border-amber-300 pb-4 mb-6">
+              <h2 className="text-xl font-black text-amber-900 uppercase tracking-widest flex items-center gap-3">
+                <Database className="w-6 h-6" /> Bank Flow Reconciler
+              </h2>
+           </div>
+           
+           <div className="bg-white rounded-sm shadow-xl border border-amber-200 overflow-hidden">
+              <table className="min-w-full text-[12px]">
+                <thead className="bg-amber-800 text-white uppercase tracking-widest font-black">
+                  <tr>
+                    <th className="px-6 py-5 w-12"></th>
+                    <th className="px-6 py-5 text-left">Period</th>
+                    <th className="px-6 py-5 text-left">Financial Institution</th>
+                    <th className="px-6 py-5 text-right">Closing Flow</th>
+                    <th className="px-6 py-5 text-right">Currency</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-amber-100">
+                  {statements.map(doc => {
+                    const isOpen = expandedId === doc.id;
+                    return (
+                      <React.Fragment key={doc.id}>
+                        <tr className="hover:bg-amber-50/50 transition-colors bg-amber-50/10">
+                          <td className="px-6 py-5">
+                            <button onClick={() => setExpandedId(isOpen ? null : doc.id)} className="p-2 hover:bg-amber-200 rounded-sm">
+                              {isOpen ? <ChevronDown className="w-5 h-5 text-amber-700" /> : <ChevronRight className="w-5 h-5 text-amber-700" />}
+                            </button>
+                          </td>
+                          <td className="px-6 py-5 font-mono font-bold text-amber-900">{doc.data!.date}</td>
+                          <td className="px-6 py-5 font-black text-amber-950 uppercase">{doc.data!.issuer}</td>
+                          <td className="px-6 py-5 text-right font-black text-amber-900">
+                             {doc.data!.totalAmount.toLocaleString()}
+                          </td>
+                          <td className="px-6 py-5 text-right font-black text-amber-700/60 uppercase">{doc.data!.originalCurrency}</td>
+                        </tr>
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={5} className="bg-amber-50/50 px-12 py-8 border-y border-amber-100">
+                               <div className="bg-white rounded-sm border border-amber-200 shadow-xl overflow-hidden animate-in slide-in-from-top-4">
+                                  <table className="min-w-full text-[11px]">
+                                     <thead className="bg-white text-amber-900 font-black uppercase border-b border-amber-100 shadow-sm">
+                                        <tr>
+                                           <th className="px-6 py-3 text-left">Date</th>
+                                           <th className="px-6 py-3 text-left">Description</th>
+                                           <th className="px-6 py-3 text-right">Amount</th>
+                                        </tr>
+                                     </thead>
+                                     <tbody className="divide-y divide-amber-50">
+                                        {doc.data!.lineItems?.map((t, i) => (
+                                          <tr key={i} className="hover:bg-amber-50/50">
+                                             <td className="px-6 py-3 font-mono text-amber-700">{t.date}</td>
+                                             <td className="px-6 py-3 font-bold text-amber-950">{t.description}</td>
+                                             <td className={`px-6 py-3 text-right font-mono font-black ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-700'}`}>
+                                                {t.type === 'INCOME' ? '+' : '-'}{t.amount.toLocaleString()}
+                                             </td>
+                                          </tr>
+                                        ))}
+                                     </tbody>
+                                  </table>
+                               </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+           </div>
         </div>
       )}
     </div>

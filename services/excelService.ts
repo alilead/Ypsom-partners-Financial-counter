@@ -3,9 +3,7 @@ import * as XLSX from 'xlsx';
 import { FinancialData, DocumentType } from '../types';
 
 /**
- * Exports financial data to Excel matching the UI table exactly.
- * Columns: Date, Issuer, Original Amount, VAT, Exchange Rate, Total (Converted)
- * Includes a summary TOTAL row at the bottom with the currency.
+ * Exports financial data to Excel matching the unified Audit Ledger.
  */
 export const exportToExcel = (data: FinancialData[], fileNamePrefix: string, reportingCurrency: string = 'CHF') => {
   if (data.length === 0) {
@@ -21,59 +19,72 @@ export const exportToExcel = (data: FinancialData[], fileNamePrefix: string, rep
     const exRate = item.conversionRateUsed || 1;
     const totalTarget = item.amountInCHF;
 
-    // Check if it's a statement with line items to expand
+    // Check if it's a statement with line items to expand for a sub-audit report
     if (item.documentType === DocumentType.BANK_STATEMENT && item.lineItems && item.lineItems.length > 0) {
-      item.lineItems.forEach(line => {
-        const lineTotal = line.amount * exRate;
-        grandTotal += lineTotal;
-        rows.push({
-          'Date': line.date,
-          'Issuer': item.issuer,
-          'Original Amount': `${line.amount.toFixed(2)} ${item.originalCurrency}`,
-          'VAT': '0.00',
-          'Exchange Rate': exRate.toFixed(4),
-          [`Total (${reportingCurrency})`]: lineTotal.toFixed(2)
-        });
-      });
-    } else {
-      // Direct receipt or invoice entry
-      grandTotal += totalTarget;
       rows.push({
+        'Type': 'STATEMENT HEADER',
         'Date': item.date,
         'Issuer': item.issuer,
         'Original Amount': `${origAmt.toFixed(2)} ${item.originalCurrency}`,
         'VAT': vat.toFixed(2),
         'Exchange Rate': exRate.toFixed(4),
-        [`Total (${reportingCurrency})`]: totalTarget.toFixed(2)
+        [`Total (${reportingCurrency})`]: totalTarget.toFixed(2),
+        'Audit Ref': item.documentNumber
+      });
+
+      item.lineItems.forEach(line => {
+        rows.push({
+          'Type': `  -> Transaction`,
+          'Date': line.date,
+          'Issuer': `Ref: ${line.description}`,
+          'Original Amount': `${line.amount.toFixed(2)} ${item.originalCurrency}`,
+          'VAT': '0.00',
+          'Exchange Rate': exRate.toFixed(4),
+          [`Total (${reportingCurrency})`]: (line.amount * exRate).toFixed(2),
+          'Audit Ref': line.notes || 'No Evidence Link'
+        });
+      });
+      grandTotal += totalTarget;
+    } else {
+      grandTotal += totalTarget;
+      rows.push({
+        'Type': item.documentType,
+        'Date': item.date,
+        'Issuer': item.issuer,
+        'Original Amount': `${origAmt.toFixed(2)} ${item.originalCurrency}`,
+        'VAT': vat.toFixed(2),
+        'Exchange Rate': exRate.toFixed(4),
+        [`Total (${reportingCurrency})`]: totalTarget.toFixed(2),
+        'Audit Ref': item.documentNumber
       });
     }
   });
 
-  // Add an empty row for spacing
   rows.push({});
-
-  // Add the TOTAL row
   rows.push({
+    'Type': '',
     'Date': '',
-    'Issuer': 'GRAND TOTAL',
+    'Issuer': 'GRAND TOTAL AUDITED',
     'Original Amount': '',
     'VAT': '',
     'Exchange Rate': '',
-    [`Total (${reportingCurrency})`]: `${grandTotal.toFixed(2)} ${reportingCurrency}`
+    [`Total (${reportingCurrency})`]: `${grandTotal.toFixed(2)} ${reportingCurrency}`,
+    'Audit Ref': ''
   });
 
   const worksheet = XLSX.utils.json_to_sheet(rows);
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Audit_Ledger");
+  XLSX.utils.book_append_sheet(workbook, worksheet, "Unified_Audit_Ledger");
 
-  // Format column widths for a professional look
   worksheet['!cols'] = [
+    { wch: 20 }, // Type
     { wch: 15 }, // Date
-    { wch: 30 }, // Issuer
+    { wch: 40 }, // Issuer
     { wch: 20 }, // Original Amount
     { wch: 12 }, // VAT
     { wch: 15 }, // Exchange Rate
-    { wch: 18 }  // Total
+    { wch: 20 }, // Total
+    { wch: 25 }  // Ref
   ];
 
   XLSX.writeFile(workbook, `${fileNamePrefix}_Report_${new Date().toISOString().split('T')[0]}.xlsx`);

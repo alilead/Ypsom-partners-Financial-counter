@@ -1,5 +1,6 @@
+
 import React, { useState, useRef, useMemo } from 'react';
-import { Upload, CheckCircle, Wallet, RefreshCcw, Download, Trash2, FileSpreadsheet, Search, FileCheck, XCircle, FileUp, Zap, Clock, Loader2, ArrowUpRight, ArrowDownRight, Activity } from 'lucide-react';
+import { Upload, CheckCircle, Wallet, RefreshCcw, Download, Trash2, FileSpreadsheet, Search, FileCheck, XCircle, FileUp, Zap, Clock, Loader2, ArrowUpRight, ArrowDownRight, Activity, Ban } from 'lucide-react';
 import { analyzeBankStatement } from '../services/geminiService';
 import { ProcessedBankStatement, BankStatementAnalysis, FinancialData } from '../types';
 import * as XLSX from 'xlsx';
@@ -21,6 +22,7 @@ interface BankStatementAnalyzerProps {
 export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ supportingInvoices }) => {
   const [statements, setStatements] = useState<ProcessedBankStatement[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [reportingCurrency, setReportingCurrency] = useState('CHF');
   const [selectedStatementId, setSelectedStatementId] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -63,9 +65,16 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
     setStatements(prev => [...prev, ...newFiles]);
   };
 
+  const stopProcess = () => {
+    stopProcessingRef.current = true;
+    setIsStopping(true);
+    addNotification("Halting reconciliation...", "warning");
+  };
+
   const processQueue = async () => {
     if (isProcessing) return;
     setIsProcessing(true);
+    setIsStopping(false);
     stopProcessingRef.current = false;
     
     const pendingIndices = statements
@@ -78,7 +87,7 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
 
     const runTask = async (idx: number) => {
       const doc = statements[idx];
-      if (!doc.fileRaw || stopProcessingRef.current) return;
+      if (!doc.fileRaw) return;
 
       setStatements(prev => prev.map((d, i) => i === idx ? { ...d, status: 'processing', error: undefined } : d));
 
@@ -100,7 +109,7 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
     };
 
     while (indexInQueue < pendingIndices.length && !stopProcessingRef.current) {
-      while (activeTasks.size < CONCURRENCY_LIMIT && indexInQueue < pendingIndices.length) {
+      while (activeTasks.size < CONCURRENCY_LIMIT && indexInQueue < pendingIndices.length && !stopProcessingRef.current) {
         const idx = pendingIndices[indexInQueue++];
         const task = runTask(idx).finally(() => activeTasks.delete(task));
         activeTasks.add(task);
@@ -110,6 +119,7 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
 
     await Promise.all(activeTasks);
     setIsProcessing(false);
+    setIsStopping(false);
   };
 
   const activeStatement = statements.find(s => s.id === selectedStatementId);
@@ -148,13 +158,29 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
                 </div>
 
                 <div className="w-full md:w-64 flex flex-col gap-3">
-                    <button onClick={processQueue} disabled={isProcessing || stats.pending === 0} className="w-full bg-ypsom-deep text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center">
-                        <RefreshCcw className={`w-4 h-4 mr-2 ${isProcessing ? 'animate-spin' : ''}`} /> Run Parallel Linking
-                    </button>
+                    {isProcessing ? (
+                      <button 
+                        onClick={stopProcess}
+                        disabled={isStopping}
+                        className="w-full bg-red-600 text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center hover:bg-red-700 transition-colors"
+                      >
+                        <Ban className="w-4 h-4 mr-2" /> {isStopping ? 'Stopping...' : 'Stop Linking'}
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={processQueue} 
+                        disabled={stats.pending === 0} 
+                        className="w-full bg-ypsom-deep text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center hover:bg-ypsom-shadow transition-colors"
+                      >
+                        <RefreshCcw className="w-4 h-4 mr-2" /> Run Parallel Linking
+                      </button>
+                    )}
                     {isProcessing && (
                       <div className="text-center">
-                        <p className="text-[9px] font-bold text-ypsom-deep uppercase tracking-[0.2em] mb-1">Processing Workers: 3</p>
-                        <p className="text-[8px] text-ypsom-slate font-medium">EST: {stats.timeStr}</p>
+                        <p className={`text-[9px] font-bold uppercase tracking-[0.2em] mb-1 ${isStopping ? 'text-red-500' : 'text-ypsom-deep'}`}>
+                          {isStopping ? 'Draining Workers' : '3 Active Workers'}
+                        </p>
+                        {!isStopping && <p className="text-[8px] text-ypsom-slate font-medium">EST: {stats.timeStr}</p>}
                       </div>
                     )}
                 </div>
@@ -162,13 +188,13 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
 
             {isProcessing && (
                 <div className="w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
-                    <div className="h-full bg-ypsom-deep transition-all duration-700" style={{ width: `${stats.progress}%` }} />
+                    <div className={`h-full transition-all duration-700 ${isStopping ? 'bg-red-500' : 'bg-ypsom-deep'}`} style={{ width: `${stats.progress}%` }} />
                 </div>
             )}
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-            <div className="lg:col-span-1 bg-white rounded-sm border border-ypsom-alice h-fit max-h-[600px] overflow-y-auto">
+            <div className="lg:col-span-1 bg-white rounded-sm border border-ypsom-alice h-fit max-h-[600px] overflow-y-auto custom-scrollbar">
                 <div className="p-4 bg-gray-50 border-b border-ypsom-alice font-bold text-[10px] text-ypsom-slate uppercase tracking-widest">Statement Queue</div>
                 <ul className="divide-y divide-ypsom-alice">
                     {statements.map(s => (
@@ -186,7 +212,6 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
             <div className="lg:col-span-3 space-y-6">
                 {activeStatement && activeStatement.status === 'completed' && summary ? (
                     <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                        {/* Statement Financial Summary Grid */}
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                             <div className="bg-white p-4 rounded-sm border border-ypsom-alice shadow-sm flex flex-col justify-between h-28">
                                 <div className="flex justify-between items-start">
@@ -235,7 +260,6 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
                             </div>
                         </div>
 
-                        {/* Transaction Ledger */}
                         <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
                             <div className="px-6 py-4 border-b border-ypsom-alice bg-gray-50 flex justify-between items-center">
                                 <h3 className="font-bold text-ypsom-deep text-sm flex items-center"><FileSpreadsheet className="w-4 h-4 mr-2" /> Reconciled Transaction Ledger</h3>

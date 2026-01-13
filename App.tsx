@@ -1,14 +1,10 @@
 
 import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
-import { BankStatementAnalyzer } from './components/BankStatementAnalyzer';
-import { LayoutDashboard, Wallet } from 'lucide-react';
+import { LayoutDashboard } from 'lucide-react';
 import { ProcessedDocument } from './types';
 
-type View = 'invoices' | 'bank';
-
 function App() {
-  const [currentView, setCurrentView] = useState<View>('invoices');
   const [processedDocuments, setProcessedDocuments] = useState<ProcessedDocument[]>([]);
 
   return (
@@ -31,70 +27,41 @@ function App() {
             <div className="hidden md:flex items-center space-x-4">
                <div className="text-right">
                  <p className="text-xs text-ypsom-slate font-medium">Internal System</p>
-                 <p className="text-xs font-bold text-ypsom-deep">Authorized Personnel Only</p>
+                 <p className="text-xs font-bold text-ypsom-deep">Universal Audit Engine v2.5</p>
                </div>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Navigation Tabs */}
-      <div className="bg-white border-b border-ypsom-alice">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-              <nav className="flex space-x-8 -mb-px">
-                  <button 
-                    onClick={() => setCurrentView('invoices')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
-                        currentView === 'invoices' 
-                        ? 'border-ypsom-deep text-ypsom-deep' 
-                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
-                    }`}
-                  >
-                      <LayoutDashboard className="w-4 h-4 mr-2" />
-                      Invoices & Receipts
-                  </button>
-                  <button 
-                    onClick={() => setCurrentView('bank')}
-                    className={`py-4 px-1 border-b-2 font-medium text-sm flex items-center ${
-                        currentView === 'bank' 
-                        ? 'border-ypsom-deep text-ypsom-deep' 
-                        : 'border-transparent text-ypsom-slate hover:text-ypsom-shadow hover:border-ypsom-alice'
-                    }`}
-                  >
-                      <Wallet className="w-4 h-4 mr-2" />
-                      Bank Statements
-                  </button>
-              </nav>
-          </div>
-      </div>
-
       {/* Main Dashboard */}
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
-        <div className="mb-8">
-           <h1 className="text-2xl font-bold text-ypsom-deep">
-               {currentView === 'invoices' && "Invoice Processing"}
-               {currentView === 'bank' && "Statement Analysis"}
-           </h1>
-           <p className="text-sm text-ypsom-slate mt-1">
-             {currentView === 'invoices' && "Classify and extract data from invoices and receipts."}
-             {currentView === 'bank' && "Analyze cash flow, calculate totals, and reconcile with uploaded evidence."}
-           </p>
+        <div className="mb-8 flex flex-col md:flex-row md:items-end justify-between gap-4">
+           <div>
+             <h1 className="text-2xl font-bold text-ypsom-deep flex items-center gap-2">
+                 <LayoutDashboard className="w-6 h-6" /> Unified Audit Dashboard
+             </h1>
+             <p className="text-sm text-ypsom-slate mt-1">
+               Upload any financial evidence. The engine automatically detects and reconciles Invoices, Receipts, and Bank Statements.
+             </p>
+           </div>
+           <div className="bg-ypsom-alice/30 px-4 py-2 rounded-sm border border-ypsom-alice flex items-center gap-3">
+              <div className="flex -space-x-2">
+                <div className="w-6 h-6 rounded-full bg-blue-500 border-2 border-white flex items-center justify-center text-[8px] text-white font-bold">INV</div>
+                <div className="w-6 h-6 rounded-full bg-green-500 border-2 border-white flex items-center justify-center text-[8px] text-white font-bold">REC</div>
+                <div className="w-6 h-6 rounded-full bg-amber-500 border-2 border-white flex items-center justify-center text-[8px] text-white font-bold">BS</div>
+              </div>
+              <span className="text-[10px] font-bold text-ypsom-deep uppercase tracking-widest">Multi-Format Support Active</span>
+           </div>
         </div>
 
         {/* Content Area */}
         <div className="w-full min-h-[500px] animate-in fade-in duration-300">
-            {currentView === 'invoices' && (
-              <DocumentProcessor 
-                documents={processedDocuments} 
-                setDocuments={setProcessedDocuments} 
-              />
-            )}
-            {currentView === 'bank' && (
-              <BankStatementAnalyzer 
-                supportingInvoices={processedDocuments.filter(d => d.status === 'completed' && d.data).map(d => ({...d.data!, sourceFile: d.fileName}))} 
-              />
-            )}
+            <DocumentProcessor 
+              documents={processedDocuments} 
+              setDocuments={setProcessedDocuments} 
+            />
         </div>
 
       </main>
