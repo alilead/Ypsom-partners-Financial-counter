@@ -1,6 +1,6 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { DocumentType, FinancialData, BankStatementAnalysis, BankTransaction } from "../types";
+import { DocumentType, FinancialData, BankTransaction, BankStatementAnalysis } from "../types";
 
 export const fileToBase64 = (file: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -15,17 +15,13 @@ export const fileToBase64 = (file: Blob): Promise<string> => {
   });
 };
 
-/**
- * Fetches real-time exchange rates as a fallback/verification for AI extraction.
- */
 export const getLiveExchangeRate = async (from: string, to: string): Promise<number> => {
-  if (from === to) return 1.0;
+  if (!from || from === to || from === '---') return 1.0;
   try {
     const res = await fetch(`https://api.frankfurter.app/latest?from=${from}&to=${to}`);
     const data = await res.json();
     return data.rates[to] || 1.0;
   } catch (e) {
-    console.error("Currency API failure, falling back to AI estimation", e);
     return 1.0;
   }
 };
@@ -42,35 +38,44 @@ const withRetry = async <T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
   }
 };
 
-export const analyzeFinancialDocument = async (file: File, targetCurrency: string = 'CHF'): Promise<FinancialData> => {
+export const analyzeFinancialDocument = async (
+  file: File, 
+  targetCurrency: string = 'CHF', 
+  userHint?: string
+): Promise<FinancialData> => {
   const base64 = await fileToBase64(file);
   const mimeType = file.type;
-  const fullFileName = file.name;
 
   return withRetry(async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    const schema = {
+    const coreSchema: any = {
       type: Type.OBJECT,
       properties: {
         documentType: {
           type: Type.STRING,
-          enum: [DocumentType.INVOICE, DocumentType.RECEIPT, DocumentType.BANK_STATEMENT, DocumentType.UNKNOWN]
+          enum: ["Bank Statement", "Invoice", "Ticket/Receipt", "Z2 Multi-Ticket Sheet", "Bank Deposit", "Unknown"],
+          description: "MANDATORY: Use 'Bank Deposit' for ATM/Bank confirmations. Use 'Z2 Multi-Ticket Sheet' ONLY if the file contains 2 or more distinct receipts/invoices."
         },
-        date: { type: Type.STRING, description: "Format: YYYY-MM-DD" },
-        issuer: { 
-          type: Type.STRING, 
-          description: "The business brand name. Ignore operational labels." 
-        },
+        date: { type: Type.STRING, description: "YYYY-MM-DD" },
+        issuer: { type: Type.STRING, description: "Primary entity name." },
         documentNumber: { type: Type.STRING },
-        totalAmount: { type: Type.NUMBER, description: "Set to 0 if not detectable or blurred." },
+        totalAmount: { type: Type.NUMBER },
         originalCurrency: { type: Type.STRING },
         vatAmount: { type: Type.NUMBER },
-        netAmount: { type: Type.NUMBER },
-        expenseCategory: { type: Type.STRING },
-        amountInCHF: { type: Type.NUMBER, description: `The total amount converted to ${targetCurrency}` },
-        conversionRateUsed: { type: Type.NUMBER, description: `The exchange rate used to convert to ${targetCurrency}` },
+        expenseCategory: { 
+          type: Type.STRING,
+          description: "e.g. Salary, Rent, Beauty, Travel, Shopping, Health, Cash Deposit, Utility, Groceries, Software, Bank. If ambiguous, provide a specific label."
+        },
+        amountInCHF: { type: Type.NUMBER },
         notes: { type: Type.STRING },
+        aiInterpretation: { type: Type.STRING, description: "Diagnostic explanation of the scan result." },
+        confidenceScore: { type: Type.NUMBER },
+        forensicAlerts: { type: Type.ARRAY, items: { type: Type.STRING } },
+        openingBalance: { type: Type.NUMBER },
+        finalBalance: { type: Type.NUMBER, description: "The final balance (solde) shown on the bank document." },
+        calculatedTotalIncome: { type: Type.NUMBER },
+        calculatedTotalExpense: { type: Type.NUMBER },
         lineItems: {
           type: Type.ARRAY,
           items: {
@@ -81,13 +86,28 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
               amount: { type: Type.NUMBER },
               type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
               category: { type: Type.STRING }
-            },
-            required: ["date", "description", "amount", "type", "category"]
+            }
+          }
+        },
+        subDocuments: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              issuer: { type: Type.STRING },
+              date: { type: Type.STRING },
+              totalAmount: { type: Type.NUMBER },
+              originalCurrency: { type: Type.STRING },
+              documentType: { type: Type.STRING, enum: ["VOUCHER", "TICKET/RECEIPT", "BANK_DEPOSIT"] },
+              expenseCategory: { type: Type.STRING },
+            }
           }
         }
       },
-      required: ["documentType", "totalAmount", "originalCurrency", "issuer", "date"]
+      required: ["documentType", "totalAmount", "originalCurrency", "issuer", "expenseCategory"]
     };
+
+    const hintSection = userHint ? `USER OVERRIDE HINT: "${userHint}".` : "";
 
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview', 
@@ -95,41 +115,44 @@ export const analyzeFinancialDocument = async (file: File, targetCurrency: strin
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
           {
-            text: `Extract structured data from "${fullFileName}". 
+            text: `AUDIT INTELLIGENCE MISSION (DEEP SCAN):
+            ${hintSection}
             
-            ACCURACY INSTRUCTIONS:
-            1. Detect original currency and total amount. If blurred/missing, return totalAmount: 0.
-            2. Convert to ${targetCurrency}. Use current market rates if not found on page.
-            3. Explicitly look for tax/VAT amounts.
-            4. If it's a Bank Statement, extract all transactions individually.
+            1. MULTI-PAGE SCAN: This file might have dozens of pages. Scan EVERY page.
+            2. ASSET ISOLATION: Identify every separate transaction confirmation. If multiple exist, use 'Z2 Multi-Ticket Sheet' and list them in 'subDocuments'.
+            3. BANK STATEMENTS: If this is a bank statement, extract EVERY transaction from EVERY page into 'lineItems'. Find the opening balance and the final balance (solde). Calculate the total income and total expense shown.
+            4. CATEGORY FIDELITY: Suggest the most accurate financial category string.
             
-            Use Google Search to verify the exchange rate for the document date if possible.`
+            Return JSON only.`
           }
         ]
       },
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema,
-        tools: [{ googleSearch: {} }]
+        responseSchema: coreSchema,
       }
     });
 
-    const text = response.text;
-    if (!text) throw new Error("AI Engine failure.");
-    
-    const parsed = JSON.parse(text) as FinancialData;
+    const parsed = JSON.parse(response.text) as FinancialData;
 
-    // Safety fallback for conversions
-    if (!parsed.amountInCHF && parsed.totalAmount > 0) {
-      const liveRate = await getLiveExchangeRate(parsed.originalCurrency || 'EUR', targetCurrency);
-      parsed.amountInCHF = parsed.totalAmount * liveRate;
-      parsed.conversionRateUsed = liveRate;
+    if (parsed.subDocuments && parsed.subDocuments.length > 0) {
+       const sum = parsed.subDocuments.reduce((s, doc) => s + (doc.totalAmount || 0), 0);
+       if (!parsed.totalAmount || parsed.totalAmount === 0) {
+          parsed.totalAmount = sum;
+       }
+    }
+
+    if (parsed.totalAmount !== undefined && (!parsed.amountInCHF || parsed.amountInCHF === 0)) {
+      const rate = await getLiveExchangeRate(parsed.originalCurrency || 'CHF', targetCurrency);
+      parsed.amountInCHF = parsed.totalAmount * rate;
+      parsed.conversionRateUsed = rate;
     }
 
     return parsed;
   });
 };
 
+// Fixed analyzeBankStatement to properly handle the GenAI response and return BankStatementAnalysis
 export const analyzeBankStatement = async (file: File, targetCurrency: string = 'CHF'): Promise<BankStatementAnalysis> => {
   const base64 = await fileToBase64(file);
   const mimeType = file.type;
@@ -137,62 +160,49 @@ export const analyzeBankStatement = async (file: File, targetCurrency: string = 
   return withRetry(async () => {
     const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
     
-    const schema = {
-      type: Type.OBJECT,
-      properties: {
-        accountHolder: { type: Type.STRING },
-        period: { type: Type.STRING },
-        currency: { type: Type.STRING },
-        transactions: {
-          type: Type.ARRAY,
-          items: {
-            type: Type.OBJECT,
-            properties: {
-              date: { type: Type.STRING },
-              description: { type: Type.STRING },
-              amount: { type: Type.NUMBER },
-              type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
-              category: { type: Type.STRING }
-            },
-            required: ["date", "description", "amount", "type", "category"]
-          }
-        },
-        calculatedTotalIncome: { type: Type.NUMBER },
-        calculatedTotalExpense: { type: Type.NUMBER },
-        openingBalance: { type: Type.NUMBER },
-        closingBalance: { type: Type.NUMBER }
-      },
-      required: ["accountHolder", "period", "currency", "transactions"]
-    };
-
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: 'gemini-3-flash-preview', 
       contents: {
         parts: [
           { inlineData: { mimeType: mimeType, data: base64 } },
-          { text: `Extract bank transactions into JSON. Convert amounts to relative ${targetCurrency} if necessary.` }
+          {
+            text: `Extract the full multi-page transaction ledger from this bank statement. You MUST find the opening balance and final balance (solde).`
+          }
         ]
       },
       config: {
         responseMimeType: "application/json",
-        responseSchema: schema
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            transactions: {
+              type: Type.ARRAY,
+              items: {
+                type: Type.OBJECT,
+                properties: {
+                  date: { type: Type.STRING },
+                  description: { type: Type.STRING },
+                  amount: { type: Type.NUMBER },
+                  type: { type: Type.STRING, enum: ["INCOME", "EXPENSE"] },
+                  category: { type: Type.STRING }
+                },
+                required: ["date", "description", "amount", "type"]
+              }
+            },
+            calculatedTotalIncome: { type: Type.NUMBER },
+            calculatedTotalExpense: { type: Type.NUMBER },
+            openingBalance: { type: Type.NUMBER },
+            finalBalance: { type: Type.NUMBER },
+            currency: { type: Type.STRING },
+            period: { type: Type.STRING }
+          },
+          required: ["transactions", "calculatedTotalIncome", "calculatedTotalExpense", "currency"]
+        }
       }
     });
 
     const text = response.text;
-    if (!text) throw new Error("AI Engine failure.");
+    if (!text) throw new Error("Empty response from AI engine");
     return JSON.parse(text) as BankStatementAnalysis;
   });
-};
-
-export const generateAuditSummary = async (data: FinancialData[], currency: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-  const context = JSON.stringify(data);
-  
-  const response = await ai.models.generateContent({
-    model: 'gemini-3-flash-preview',
-    contents: `Analyze this audit data and provide a professional executive summary in ${currency}. Use Markdown.`
-  });
-  
-  return response.text || "Summary generation failed.";
 };

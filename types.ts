@@ -2,7 +2,9 @@
 export enum DocumentType {
   BANK_STATEMENT = 'Bank Statement',
   INVOICE = 'Invoice',
-  RECEIPT = 'Receipt',
+  RECEIPT = 'Ticket/Receipt',
+  Z2_BULK_REPORT = 'Z2 Multi-Ticket Sheet',
+  BANK_DEPOSIT = 'Bank Deposit',
   UNKNOWN = 'Unknown'
 }
 
@@ -11,9 +13,11 @@ export interface BankTransaction {
   description: string;
   amount: number;
   type: 'INCOME' | 'EXPENSE';
-  category: string; // e.g. Food, Salary, Rent, Utilities
-  supportingDocRef?: string;
+  category: string; 
   notes?: string;
+  quantity?: number;
+  unitPrice?: number;
+  isHumanVerified?: boolean;
 }
 
 export interface FinancialData {
@@ -30,22 +34,38 @@ export interface FinancialData {
   conversionRateUsed: number;
   notes: string;
   lineItems?: BankTransaction[];
-  handwrittenRef?: string;
-  groundingUrls?: string[]; 
+  subDocuments?: FinancialData[]; 
+  forensicAlerts?: string[];
+  groundingUrls?: string[];
+  aiInterpretation?: string;
+  confidenceScore?: number;
+  isHumanVerified?: boolean;
+  // Bank specific fields for audit
+  openingBalance?: number;
+  finalBalance?: number;
+  calculatedTotalIncome?: number;
+  calculatedTotalExpense?: number;
 }
 
 export interface ProcessedDocument {
   id: string;
   fileName: string;
-  status: 'pending' | 'processing' | 'completed' | 'error';
+  status: 'pending' | 'processing' | 'completed' | 'error' | 'verifying';
   data?: FinancialData;
   error?: string;
   fileRaw?: File;
 }
 
-/**
- * Fix: Added missing ProcessedBankStatement interface for bank-specific reconciliation workflows.
- */
+export interface BankStatementAnalysis {
+  transactions: BankTransaction[];
+  calculatedTotalIncome: number;
+  calculatedTotalExpense: number;
+  openingBalance?: number;
+  finalBalance?: number;
+  currency: string;
+  period?: string;
+}
+
 export interface ProcessedBankStatement {
   id: string;
   fileName: string;
@@ -53,15 +73,4 @@ export interface ProcessedBankStatement {
   data?: BankStatementAnalysis;
   error?: string;
   fileRaw?: File;
-}
-
-export interface BankStatementAnalysis {
-  accountHolder: string;
-  period: string;
-  currency: string;
-  transactions: BankTransaction[];
-  calculatedTotalIncome?: number;
-  calculatedTotalExpense?: number;
-  openingBalance?: number;
-  closingBalance?: number;
 }

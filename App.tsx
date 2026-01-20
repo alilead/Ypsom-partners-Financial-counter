@@ -1,7 +1,8 @@
+
 import React, { useState } from 'react';
 import { DocumentProcessor } from './components/DocumentProcessor';
 import { FinancialInsights } from './components/FinancialInsights';
-import { ShieldCheck, Sparkles } from 'lucide-react';
+import { ShieldCheck, Sparkles, Zap, Eye, Wallet } from 'lucide-react';
 import { ProcessedDocument } from './types';
 
 function App() {
@@ -10,69 +11,61 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <header className="bg-white border-b border-ypsom-alice sticky top-0 z-50 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-20 items-center">
+      <header className="bg-white border-b border-ypsom-alice sticky top-0 z-50">
+        <div className="max-w-[1400px] mx-auto px-6">
+          <div className="flex justify-between h-16 items-center">
             <div className="flex items-center">
-              <div className="w-10 h-10 bg-ypsom-deep rounded-sm flex items-center justify-center mr-3 shadow-sm">
-                <span className="text-white font-bold text-xl font-serif italic">YP</span>
+              <div className="w-8 h-8 bg-ypsom-deep rounded-sm flex items-center justify-center mr-3">
+                <span className="text-white font-bold text-sm font-serif italic">YP</span>
               </div>
-              <div className="flex flex-col justify-center">
-                <span className="font-bold text-2xl text-ypsom-deep tracking-widest leading-none">YPSOM <span className="font-light">PARTNERS</span></span>
-                <span className="text-[0.65rem] tracking-[0.2em] text-ypsom-slate uppercase font-medium mt-1">Finance | Tax | Audit</span>
+              <div className="flex flex-col">
+                <span className="font-black text-lg text-ypsom-deep tracking-wider leading-none">YPSOM <span className="font-light">PARTNERS</span></span>
+                <span className="text-[0.55rem] tracking-[0.3em] text-ypsom-slate uppercase font-bold">Audit Intelligence</span>
               </div>
             </div>
             
             <nav className="flex items-center space-x-1">
               <button 
                 onClick={() => setActiveTab('audit')}
-                className={`px-4 py-2 rounded-sm text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'audit' ? 'bg-ypsom-deep text-white' : 'text-ypsom-slate hover:bg-ypsom-alice/50'}`}
+                className={`px-4 py-2 rounded-sm text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'audit' ? 'bg-ypsom-deep text-white shadow-md' : 'text-ypsom-slate hover:bg-gray-100'}`}
               >
-                <ShieldCheck className="w-4 h-4" /> Evidence Audit
+                <ShieldCheck className="w-3.5 h-3.5" /> Audit Center
               </button>
               <button 
                 onClick={() => setActiveTab('insights')}
-                className={`px-4 py-2 rounded-sm text-[10px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'insights' ? 'bg-ypsom-deep text-white' : 'text-ypsom-slate hover:bg-ypsom-alice/50'}`}
+                className={`px-4 py-2 rounded-sm text-[9px] font-black uppercase tracking-widest transition-all flex items-center gap-2 ${activeTab === 'insights' ? 'bg-ypsom-deep text-white shadow-md' : 'text-ypsom-slate hover:bg-gray-100'}`}
               >
-                <Sparkles className="w-4 h-4" /> AI Insights
+                <Sparkles className="w-3.5 h-3.5" /> Intelligence
               </button>
             </nav>
           </div>
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="mb-8">
-           <h1 className="text-2xl font-bold text-ypsom-deep flex items-center gap-2 uppercase tracking-tight">
-               {activeTab === 'audit' ? 'Unified Audit Dashboard' : 'Financial Intelligent Planner'}
+      <main className="flex-1 max-w-[1400px] w-full mx-auto px-6 py-10">
+        <div className="mb-8 border-l-2 border-ypsom-deep pl-4">
+           <h1 className="text-xl font-black text-ypsom-deep uppercase tracking-tighter">
+               {activeTab === 'audit' ? 'Fiduciary Control Dashboard' : 'Financial Intelligence'}
            </h1>
-           <p className="text-sm text-ypsom-slate mt-1">
+           <p className="text-[11px] text-ypsom-slate mt-1 font-bold uppercase tracking-widest opacity-60">
              {activeTab === 'audit' 
-               ? 'Convert unstructured bank statements and invoices into verified financial data.' 
-               : 'Leverage AI to query records, analyze planning, and perform visual forensic analysis on documents.'}
+                ? 'High-speed automated extraction for Swiss fiduciary audits.' 
+                : 'Neural multi-modal analytics on audited datasets.'}
            </p>
         </div>
 
-        <div className="w-full animate-in fade-in duration-300">
-            {activeTab === 'audit' && (
-              <DocumentProcessor 
-                documents={processedDocuments} 
-                setDocuments={setProcessedDocuments} 
-              />
-            )}
-            {activeTab === 'insights' && (
-              <FinancialInsights documents={processedDocuments} />
-            )}
+        <div className="w-full">
+            {activeTab === 'audit' && <DocumentProcessor documents={processedDocuments} setDocuments={setProcessedDocuments} />}
+            {activeTab === 'insights' && <FinancialInsights documents={processedDocuments} />}
         </div>
       </main>
       
-      <footer className="bg-ypsom-darker py-6 mt-12 border-t border-ypsom-deep">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex justify-between items-center text-ypsom-slate/40 text-[10px] uppercase font-bold tracking-widest">
-          <div>&copy; {new Date().getFullYear()} Ypsom Partners • Advanced Audit Engine v3.1</div>
-          <div className="flex space-x-6">
-            <span>LLM-Based Extraction</span>
-            <span>Nano Banana Vision</span>
-            <span>RAG-Optimized</span>
+      <footer className="bg-white py-6 border-t border-ypsom-alice">
+        <div className="max-w-[1400px] mx-auto px-6 flex justify-between items-center text-ypsom-slate/40 text-[9px] uppercase font-black tracking-[0.3em]">
+          <div>&copy; {new Date().getFullYear()} Ypsom Partners • Fiduciary Workforce v7.0</div>
+          <div className="flex gap-6">
+            <span className="flex items-center gap-1.5"><Zap className="w-3 h-3" /> Z2 Optimized</span>
+            <span className="flex items-center gap-1.5"><Eye className="w-3 h-3" /> Forensic Trace</span>
           </div>
         </div>
       </footer>

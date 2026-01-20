@@ -30,6 +30,9 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
   const dragCounter = useRef(0);
   const stopProcessingRef = useRef(false);
 
+  // INCREASED FOR ACCELERATION
+  const CONCURRENCY_LIMIT = 6; 
+
   const stats = useMemo(() => {
     const total = statements.length;
     const completed = statements.filter(s => s.status === 'completed').length;
@@ -37,7 +40,8 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
     const errors = statements.filter(s => s.status === 'error').length;
     const progress = total > 0 ? (completed / total) * 100 : 0;
     
-    const estRemainingSeconds = (statements.filter(s => s.status === 'pending').length * 20) / 3;
+    // Adjusted estimation for 6 workers
+    const estRemainingSeconds = (statements.filter(s => s.status === 'pending').length * 15) / CONCURRENCY_LIMIT;
     const minutes = Math.floor(estRemainingSeconds / 60);
     const seconds = Math.floor(estRemainingSeconds % 60);
 
@@ -48,11 +52,6 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
     const id = Math.random().toString(36).substring(7);
     setNotifications(prev => [...prev, { id, message, type }]);
     setTimeout(() => setNotifications(prev => prev.filter(n => n.id !== id)), 5000);
-  };
-
-  const removeFile = (id: string) => {
-    if (isProcessing) return;
-    setStatements(prev => prev.filter(s => s.id !== id));
   };
 
   const addFiles = (files: File[]) => {
@@ -81,7 +80,6 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
       .map((s, i) => (s.status === 'pending' || s.status === 'error') ? i : -1)
       .filter(i => i !== -1);
 
-    const CONCURRENCY_LIMIT = 3; 
     let indexInQueue = 0;
     const activeTasks = new Set<Promise<void>>();
 
@@ -93,7 +91,6 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
 
       try {
         const result = await analyzeBankStatement(doc.fileRaw, reportingCurrency);
-        
         const reconciledTransactions = result.transactions.map(t => {
           const match = supportingInvoices.find(inv => Math.abs(inv.totalAmount - t.amount) < 0.05);
           if (match) return { ...t, notes: `Verified: ${match.issuer}`, category: match.expenseCategory };
@@ -123,17 +120,12 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
   };
 
   const activeStatement = statements.find(s => s.id === selectedStatementId);
-  
   const summary = useMemo(() => {
     if (!activeStatement?.data) return null;
     const income = activeStatement.data.calculatedTotalIncome || 0;
     const expense = activeStatement.data.calculatedTotalExpense || 0;
     const net = income - expense;
-    const count = activeStatement.data.transactions.length;
-    const opening = activeStatement.data.openingBalance || 0;
-    const closing = opening + net;
-    
-    return { income, expense, net, count, opening, closing };
+    return { income, expense, net, count: activeStatement.data.transactions.length };
   }, [activeStatement]);
 
   return (
@@ -148,44 +140,32 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
             <div className="flex flex-col md:flex-row gap-6">
                 <div className="flex-1">
                     <h2 className="text-xl font-bold text-ypsom-deep mb-2 flex items-center"><Wallet className="w-6 h-6 mr-2" /> Reconciliation Workbench</h2>
-                    <p className="text-sm text-ypsom-slate mb-6">Automated matching of bank entries with audit evidence.</p>
-                    
+                    <p className="text-sm text-ypsom-slate mb-6">Automated matching with audit evidence.</p>
                     <label className="flex items-center justify-center h-12 border-2 border-dashed border-ypsom-alice hover:bg-ypsom-alice/20 rounded-sm cursor-pointer transition-all">
                         <Upload className="w-4 h-4 mr-2 text-ypsom-slate" />
                         <span className="text-[10px] font-black uppercase tracking-widest text-ypsom-slate">Upload Statements for Batch Linkage</span>
                         <input type="file" className="hidden" accept="application/pdf" multiple onChange={(e) => e.target.files && addFiles(Array.from(e.target.files))} />
                     </label>
                 </div>
-
                 <div className="w-full md:w-64 flex flex-col gap-3">
                     {isProcessing ? (
-                      <button 
-                        onClick={stopProcess}
-                        disabled={isStopping}
-                        className="w-full bg-red-600 text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center hover:bg-red-700 transition-colors"
-                      >
+                      <button onClick={stopProcess} disabled={isStopping} className="w-full bg-red-600 text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest flex items-center justify-center shadow-md">
                         <Ban className="w-4 h-4 mr-2" /> {isStopping ? 'Stopping...' : 'Stop Linking'}
                       </button>
                     ) : (
-                      <button 
-                        onClick={processQueue} 
-                        disabled={stats.pending === 0} 
-                        className="w-full bg-ypsom-deep text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center hover:bg-ypsom-shadow transition-colors"
-                      >
-                        <RefreshCcw className="w-4 h-4 mr-2" /> Run Parallel Linking
+                      <button onClick={processQueue} disabled={stats.pending === 0} className="w-full bg-ypsom-deep text-white py-3 rounded-sm font-bold text-xs uppercase tracking-widest shadow-md flex items-center justify-center hover:bg-ypsom-shadow">
+                        <RefreshCcw className="w-4 h-4 mr-2" /> Turbo Linking
                       </button>
                     )}
                     {isProcessing && (
                       <div className="text-center">
-                        <p className={`text-[9px] font-bold uppercase tracking-[0.2em] mb-1 ${isStopping ? 'text-red-500' : 'text-ypsom-deep'}`}>
-                          {isStopping ? 'Draining Workers' : '3 Active Workers'}
+                        <p className={`text-[9px] font-black uppercase tracking-widest ${isStopping ? 'text-red-500' : 'text-ypsom-deep'}`}>
+                          {isStopping ? 'Draining Workers' : '6 Active Workers'}
                         </p>
-                        {!isStopping && <p className="text-[8px] text-ypsom-slate font-medium">EST: {stats.timeStr}</p>}
                       </div>
                     )}
                 </div>
             </div>
-
             {isProcessing && (
                 <div className="w-full h-1 bg-ypsom-alice rounded-full overflow-hidden">
                     <div className={`h-full transition-all duration-700 ${isStopping ? 'bg-red-500' : 'bg-ypsom-deep'}`} style={{ width: `${stats.progress}%` }} />
@@ -201,110 +181,54 @@ export const BankStatementAnalyzer: React.FC<BankStatementAnalyzerProps> = ({ su
                         <li key={s.id} onClick={() => setSelectedStatementId(s.id)} className={`p-4 cursor-pointer transition-colors flex justify-between items-center ${selectedStatementId === s.id ? 'bg-ypsom-alice/40 border-l-4 border-ypsom-deep pl-3' : 'hover:bg-gray-50'}`}>
                             <div className="flex flex-col">
                               <span className="text-xs font-bold text-ypsom-shadow truncate max-w-[120px]">{s.fileName}</span>
-                              <span className={`text-[9px] uppercase font-black mt-1 ${s.status === 'completed' ? 'text-green-600' : s.status === 'error' ? 'text-red-600' : 'text-ypsom-slate'}`}>{s.status}</span>
+                              <span className={`text-[9px] uppercase font-black mt-1 ${s.status === 'completed' ? 'text-green-600' : 'text-ypsom-slate'}`}>{s.status}</span>
                             </div>
                             {s.status === 'processing' && <Loader2 className="w-3 h-3 animate-spin text-ypsom-deep" />}
                         </li>
                     ))}
                 </ul>
             </div>
-
-            <div className="lg:col-span-3 space-y-6">
+            <div className="lg:col-span-3">
                 {activeStatement && activeStatement.status === 'completed' && summary ? (
-                    <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-300">
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                            <div className="bg-white p-4 rounded-sm border border-ypsom-alice shadow-sm flex flex-col justify-between h-28">
-                                <div className="flex justify-between items-start">
-                                    <span className="text-[9px] font-black text-ypsom-slate uppercase tracking-[0.15em]">Total Income</span>
-                                    <ArrowUpRight className="w-3 h-3 text-green-500" />
-                                </div>
-                                <div>
-                                    <p className="text-lg font-bold text-ypsom-deep font-mono leading-none">{summary.income.toFixed(2)}</p>
-                                    <p className="text-[9px] text-ypsom-slate mt-1 font-bold">{activeStatement.data?.currency}</p>
-                                </div>
-                            </div>
-
-                            <div className="bg-white p-4 rounded-sm border border-ypsom-alice shadow-sm flex flex-col justify-between h-28">
-                                <div className="flex justify-between items-start">
-                                    <span className="text-[9px] font-black text-ypsom-slate uppercase tracking-[0.15em]">Total Expenses</span>
-                                    <ArrowDownRight className="w-3 h-3 text-red-500" />
-                                </div>
-                                <div>
-                                    <p className="text-lg font-bold text-ypsom-deep font-mono leading-none">{summary.expense.toFixed(2)}</p>
-                                    <p className="text-[9px] text-ypsom-slate mt-1 font-bold">{activeStatement.data?.currency}</p>
-                                </div>
-                            </div>
-
-                            <div className={`p-4 rounded-sm border shadow-sm flex flex-col justify-between h-28 ${summary.net >= 0 ? 'bg-green-50/30 border-green-100' : 'bg-red-50/30 border-red-100'}`}>
-                                <div className="flex justify-between items-start">
-                                    <span className={`text-[9px] font-black uppercase tracking-[0.15em] ${summary.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>Net Cash Flow</span>
-                                    <Activity className={`w-3 h-3 ${summary.net >= 0 ? 'text-green-500' : 'text-red-500'}`} />
-                                </div>
-                                <div>
-                                    <p className={`text-lg font-bold font-mono leading-none ${summary.net >= 0 ? 'text-green-700' : 'text-red-700'}`}>
-                                        {summary.net >= 0 ? '+' : ''}{summary.net.toFixed(2)}
-                                    </p>
-                                    <p className="text-[9px] text-ypsom-slate mt-1 font-bold">CALCULATED CLOSING</p>
-                                </div>
-                            </div>
-
-                            <div className="bg-ypsom-deep p-4 rounded-sm border border-ypsom-deep shadow-sm flex flex-col justify-between h-28">
-                                <div className="flex justify-between items-start">
-                                    <span className="text-[9px] font-black text-white/60 uppercase tracking-[0.15em]">Statement Period</span>
-                                    <Wallet className="w-3 h-3 text-white/40" />
-                                </div>
-                                <div>
-                                    <p className="text-sm font-bold text-white truncate">{activeStatement.data?.period || 'N/A'}</p>
-                                    <p className="text-[9px] text-white/60 mt-1 font-bold uppercase">{summary.count} TRANSACTIONS</p>
-                                </div>
-                            </div>
+                  <div className="space-y-6">
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-white p-4 rounded-sm border border-ypsom-alice shadow-sm">
+                           <span className="text-[9px] font-black text-ypsom-slate uppercase tracking-widest">Income</span>
+                           <p className="text-lg font-bold text-green-700 font-mono">{summary.income.toFixed(2)}</p>
                         </div>
-
-                        <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
-                            <div className="px-6 py-4 border-b border-ypsom-alice bg-gray-50 flex justify-between items-center">
-                                <h3 className="font-bold text-ypsom-deep text-sm flex items-center"><FileSpreadsheet className="w-4 h-4 mr-2" /> Reconciled Transaction Ledger</h3>
-                            </div>
-                            <div className="overflow-x-auto">
-                              <table className="min-w-full divide-y divide-ypsom-alice text-xs">
-                                  <thead className="bg-ypsom-alice/10">
-                                      <tr className="font-bold text-ypsom-deep uppercase text-[9px] tracking-wider">
-                                          <th className="px-4 py-4 text-left">Date</th>
-                                          <th className="px-4 py-4 text-left">Description</th>
-                                          <th className="px-4 py-4 text-right">Amount</th>
-                                          <th className="px-4 py-4 text-left">Audit Linking</th>
-                                      </tr>
-                                  </thead>
-                                  <tbody className="bg-white divide-y divide-ypsom-alice">
-                                      {activeStatement.data!.transactions.map((t, idx) => (
-                                          <tr key={idx} className={`hover:bg-ypsom-alice/5 transition-colors ${t.notes?.startsWith('Verified') ? 'bg-green-50/20' : ''}`}>
-                                              <td className="px-4 py-3 font-mono text-ypsom-slate">{t.date}</td>
-                                              <td className="px-4 py-3 font-bold text-ypsom-deep">{t.description}</td>
-                                              <td className={`px-4 py-3 text-right font-mono font-bold ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-600'}`}>
-                                                {t.amount.toFixed(2)}
-                                              </td>
-                                              <td className="px-4 py-3 italic text-ypsom-slate">
-                                                {t.notes ? (
-                                                  <span className="flex items-center text-green-700 font-medium">
-                                                    <CheckCircle className="w-3 h-3 mr-1.5" /> {t.notes}
-                                                  </span>
-                                                ) : (
-                                                  <span className="opacity-40">No supporting doc linked</span>
-                                                )}
-                                              </td>
-                                          </tr>
-                                      ))}
-                                  </tbody>
-                              </table>
-                            </div>
+                        <div className="bg-white p-4 rounded-sm border border-ypsom-alice shadow-sm">
+                           <span className="text-[9px] font-black text-ypsom-slate uppercase tracking-widest">Expenses</span>
+                           <p className="text-lg font-bold text-red-600 font-mono">{summary.expense.toFixed(2)}</p>
                         </div>
-                    </div>
-                ) : (
-                    <div className="h-[500px] flex flex-col items-center justify-center bg-gray-100/30 border-2 border-dashed border-ypsom-alice rounded-sm text-ypsom-slate">
-                        <Search className="w-10 h-10 opacity-20 mb-4" />
-                        <p className="text-xs font-bold uppercase tracking-widest">Select a completed statement</p>
-                        <p className="text-[10px] mt-2 opacity-60">Analysis summary and linked evidence will appear here.</p>
-                    </div>
-                )}
+                        <div className="bg-ypsom-deep p-4 rounded-sm shadow-md">
+                           <span className="text-[9px] font-black text-white/50 uppercase tracking-widest">Net Cash Flow</span>
+                           <p className="text-lg font-bold text-white font-mono">{summary.net.toFixed(2)}</p>
+                        </div>
+                     </div>
+                     <div className="bg-white rounded-sm shadow-sm border border-ypsom-alice overflow-hidden">
+                        <table className="min-w-full divide-y divide-ypsom-alice text-xs">
+                           <thead className="bg-gray-50">
+                              <tr className="font-bold text-[9px] uppercase tracking-wider text-ypsom-slate">
+                                 <th className="px-4 py-3 text-left">Date</th>
+                                 <th className="px-4 py-3 text-left">Description</th>
+                                 <th className="px-4 py-3 text-right">Amount</th>
+                                 <th className="px-4 py-3 text-left">Audit Linking</th>
+                              </tr>
+                           </thead>
+                           <tbody className="bg-white divide-y divide-ypsom-alice">
+                              {activeStatement.data!.transactions.map((t, idx) => (
+                                 <tr key={idx} className={`hover:bg-ypsom-alice/5 ${t.notes ? 'bg-green-50/20' : ''}`}>
+                                    <td className="px-4 py-3 font-mono">{t.date}</td>
+                                    <td className="px-4 py-3 font-bold">{t.description}</td>
+                                    <td className={`px-4 py-3 text-right font-mono font-bold ${t.type === 'INCOME' ? 'text-green-700' : 'text-red-600'}`}>{t.amount.toFixed(2)}</td>
+                                    <td className="px-4 py-3 text-[10px] italic">{t.notes || <span className="opacity-20">None</span>}</td>
+                                 </tr>
+                              ))}
+                           </tbody>
+                        </table>
+                     </div>
+                  </div>
+                ) : <div className="h-64 flex items-center justify-center bg-gray-50 border border-dashed border-ypsom-alice rounded-sm text-ypsom-slate/40 text-[10px] font-black uppercase tracking-widest">Select a completed analysis</div>}
             </div>
         </div>
     </div>
