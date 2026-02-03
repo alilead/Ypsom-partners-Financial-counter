@@ -47,7 +47,7 @@ export const analyzeFinancialDocument = async (
   const mimeType = file.type;
 
   return withRetry(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
     
     const coreSchema: any = {
       type: Type.OBJECT,
@@ -60,12 +60,14 @@ export const analyzeFinancialDocument = async (
         date: { type: Type.STRING, description: "YYYY-MM-DD" },
         issuer: { type: Type.STRING, description: "Primary entity name." },
         documentNumber: { type: Type.STRING },
-        totalAmount: { type: Type.NUMBER },
+        totalAmount: { type: Type.NUMBER, description: "Total amount INCLUDING VAT" },
         originalCurrency: { type: Type.STRING },
-        vatAmount: { type: Type.NUMBER },
+        vatAmount: { type: Type.NUMBER, description: "VAT/Tax amount if shown. Extract from 'TVA', 'VAT', 'MwSt', 'Tax', 'IVA' labels. Set to 0 if not found." },
+        vatRate: { type: Type.NUMBER, description: "VAT rate percentage if shown (e.g., 7.7, 8.1, 19, 20). Set to 0 if not found." },
+        netAmount: { type: Type.NUMBER, description: "Amount BEFORE VAT (net/HT). Calculate as totalAmount - vatAmount if not explicitly shown." },
         expenseCategory: { 
           type: Type.STRING,
-          description: "e.g. Salary, Rent, Beauty, Travel, Shopping, Health, Cash Deposit, Utility, Groceries, Software, Bank. If ambiguous, provide a specific label."
+          description: "CRITICAL: Provide SPECIFIC category based on issuer and context. Examples: 'Restaurant / Dining' for restaurants, 'Groceries / Food' for supermarkets, 'Beauty / Personal Care' for salons/cosmetics, 'Travel / Transport' for tickets/fuel, 'Health / Medical' for pharmacies/doctors, 'Utilities / Bills' for electricity/water/phone, 'Software / IT' for tech services, 'Professional Services' for consultants/lawyers, 'Office Supplies' for stationery, 'Insurance' for insurance companies, 'Bank Fees / Finance' for bank charges, 'Entertainment' for cinema/events, 'Education / Training' for courses/schools. Be SPECIFIC, not generic."
         },
         amountInCHF: { type: Type.NUMBER },
         notes: { type: Type.STRING },
@@ -96,10 +98,13 @@ export const analyzeFinancialDocument = async (
             properties: {
               issuer: { type: Type.STRING },
               date: { type: Type.STRING },
-              totalAmount: { type: Type.NUMBER },
+              totalAmount: { type: Type.NUMBER, description: "Total including VAT" },
               originalCurrency: { type: Type.STRING },
               documentType: { type: Type.STRING, enum: ["VOUCHER", "TICKET/RECEIPT", "BANK_DEPOSIT"] },
               expenseCategory: { type: Type.STRING },
+              vatAmount: { type: Type.NUMBER, description: "VAT amount if visible" },
+              vatRate: { type: Type.NUMBER, description: "VAT rate % if visible" },
+              netAmount: { type: Type.NUMBER, description: "Amount before VAT" },
             }
           }
         }
@@ -120,8 +125,32 @@ export const analyzeFinancialDocument = async (
             
             1. MULTI-PAGE SCAN: This file might have dozens of pages. Scan EVERY page.
             2. ASSET ISOLATION: Identify every separate transaction confirmation. If multiple exist, use 'Z2 Multi-Ticket Sheet' and list them in 'subDocuments'.
-            3. BANK STATEMENTS: If this is a bank statement, extract EVERY transaction from EVERY page into 'lineItems'. Find the opening balance and the final balance (solde). Calculate the total income and total expense shown.
-            4. CATEGORY FIDELITY: Suggest the most accurate financial category string.
+            3. BANK STATEMENTS (CRITICAL): If this is a bank statement, you MUST extract EVERY transaction from EVERY page into 'lineItems'. Do NOT truncate, summarize, or limit the list. Each transaction row on the statement must appear as one object in lineItems with date, description, amount, type (INCOME or EXPENSE), and category. Include opening balance, final balance (solde), calculatedTotalIncome, and calculatedTotalExpense.
+            4. SMART CATEGORIZATION (CRITICAL): 
+               - Analyze the ISSUER name and document content carefully
+               - Restaurants/Cafes → "Restaurant / Dining"
+               - Supermarkets/Food stores → "Groceries / Food"
+               - Salons/Spas/Cosmetics → "Beauty / Personal Care"
+               - Airlines/Trains/Taxis/Fuel → "Travel / Transport"
+               - Pharmacies/Doctors/Hospitals → "Health / Medical"
+               - Telecom/Electricity/Water → "Utilities / Bills"
+               - Tech companies/SaaS → "Software / IT"
+               - Consultants/Lawyers/Accountants → "Professional Services"
+               - Stationery/Office equipment → "Office Supplies"
+               - Insurance companies → "Insurance"
+               - Banks/Financial institutions → "Bank Fees / Finance"
+               - Cinema/Events/Subscriptions → "Entertainment"
+               - Schools/Courses/Training → "Education / Training"
+               - DO NOT use generic "SALARY" unless it's actually a salary payment
+               - BE SPECIFIC based on the actual business type
+            5. VAT DETECTION (CRITICAL): 
+               - Look for VAT/Tax labels: "TVA", "VAT", "MwSt", "Tax", "IVA", "Steuer", "Taxe"
+               - Extract VAT amount (vatAmount) if shown
+               - Extract VAT rate percentage (vatRate) if shown (e.g., 7.7%, 8.1%, 19%, 20%)
+               - Calculate net amount (netAmount) = totalAmount - vatAmount
+               - If VAT is not shown, set vatAmount=0, vatRate=0, netAmount=totalAmount
+               - For invoices/receipts, VAT is usually shown separately
+               - For Z2 Multi-Ticket sheets, extract VAT for EACH sub-document
             
             Return JSON only.`
           }
@@ -158,7 +187,7 @@ export const analyzeBankStatement = async (file: File, targetCurrency: string = 
   const mimeType = file.type;
 
   return withRetry(async () => {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_GEMINI_API_KEY });
     
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview', 

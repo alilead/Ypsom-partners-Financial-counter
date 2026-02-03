@@ -23,17 +23,23 @@ import { exportToExcel } from '../services/excelService';
 import { ProcessedDocument, DocumentType, FinancialData, BankTransaction } from '../types';
 
 export const TAX_CATEGORIES = [
-  { id: 'Salary', label: 'Salary', icon: Wallet, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-  { id: 'Rent', label: 'Rent', icon: Building2, color: 'text-indigo-600', bg: 'bg-indigo-50' },
-  { id: 'Beauty', label: 'Beauty', icon: Scissors, color: 'text-pink-600', bg: 'bg-pink-50' },
-  { id: 'Travel', label: 'Travel', icon: Plane, color: 'text-blue-600', bg: 'bg-blue-50' },
-  { id: 'Shopping', label: 'Shopping', icon: ShoppingBag, color: 'text-purple-600', bg: 'bg-purple-50' },
-  { id: 'Health', label: 'Health', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
+  { id: 'Salary', label: 'Salary / Wages', icon: Wallet, color: 'text-emerald-600', bg: 'bg-emerald-50' },
+  { id: 'Rent', label: 'Rent / Lease', icon: Building2, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+  { id: 'Beauty', label: 'Beauty / Personal Care', icon: Scissors, color: 'text-pink-600', bg: 'bg-pink-50' },
+  { id: 'Travel', label: 'Travel / Transport', icon: Plane, color: 'text-blue-600', bg: 'bg-blue-50' },
+  { id: 'Shopping', label: 'Shopping / Retail', icon: ShoppingBag, color: 'text-purple-600', bg: 'bg-purple-50' },
+  { id: 'Health', label: 'Health / Medical', icon: HeartPulse, color: 'text-red-600', bg: 'bg-red-50' },
   { id: 'Cash Deposit', label: 'Cash Deposit', icon: Banknote, color: 'text-cyan-600', bg: 'bg-cyan-50' },
-  { id: 'Utility', label: 'Utility', icon: Wrench, color: 'text-orange-600', bg: 'bg-orange-50' },
-  { id: 'Groceries', label: 'Groceries', icon: ShoppingCart, color: 'text-slate-600', bg: 'bg-slate-50' },
-  { id: 'Software', label: 'Software', icon: Code2, color: 'text-indigo-700', bg: 'bg-indigo-50' },
-  { id: 'Bank', label: 'Bank', icon: Landmark, color: 'text-blue-700', bg: 'bg-blue-50' },
+  { id: 'Utility', label: 'Utilities / Bills', icon: Wrench, color: 'text-orange-600', bg: 'bg-orange-50' },
+  { id: 'Groceries', label: 'Groceries / Food', icon: ShoppingCart, color: 'text-slate-600', bg: 'bg-slate-50' },
+  { id: 'Software', label: 'Software / IT', icon: Code2, color: 'text-indigo-700', bg: 'bg-indigo-50' },
+  { id: 'Bank', label: 'Bank Fees / Finance', icon: Landmark, color: 'text-blue-700', bg: 'bg-blue-50' },
+  { id: 'Restaurant', label: 'Restaurant / Dining', icon: Coffee, color: 'text-amber-600', bg: 'bg-amber-50' },
+  { id: 'Entertainment', label: 'Entertainment', icon: Monitor, color: 'text-purple-700', bg: 'bg-purple-50' },
+  { id: 'Insurance', label: 'Insurance', icon: Shield, color: 'text-teal-600', bg: 'bg-teal-50' },
+  { id: 'Education', label: 'Education / Training', icon: Bookmark, color: 'text-blue-800', bg: 'bg-blue-50' },
+  { id: 'Office Supplies', label: 'Office Supplies', icon: Package, color: 'text-gray-600', bg: 'bg-gray-50' },
+  { id: 'Professional Services', label: 'Professional Services', icon: Wrench, color: 'text-indigo-800', bg: 'bg-indigo-50' },
 ];
 
 const NeuralLog: React.FC<{ doc: ProcessedDocument }> = ({ doc }) => {
@@ -101,10 +107,6 @@ const EditableAuditLedger: React.FC<{
   currency: string,
   onUpdate: (newItems: BankTransaction[]) => void
 }> = ({ items, currency, onUpdate }) => {
-  const INITIAL_COUNT = 15;
-  const [visibleCount, setVisibleCount] = useState(INITIAL_COUNT);
-  const loadMore = () => setVisibleCount(prev => prev + 25);
-
   const handleItemChange = (idx: number, field: keyof BankTransaction, value: any) => {
     const next = [...items];
     next[idx] = { ...next[idx], [field]: value, isHumanVerified: false };
@@ -136,10 +138,11 @@ const EditableAuditLedger: React.FC<{
               <th className="px-2 py-3 text-left min-w-[150px]">Audit Description</th>
               <th className="px-2 py-3 text-right w-28">Value ({currency})</th>
               <th className="px-2 py-3 text-center w-20">Nature</th>
+              <th className="px-2 py-3 text-left min-w-[100px]">Category</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-ypsom-alice">
-            {items.slice(0, visibleCount).map((item, idx) => (
+            {items.map((item, idx) => (
               <tr key={idx} className={`hover:bg-ypsom-alice/5 transition-colors ${item.isHumanVerified ? 'bg-emerald-50/20' : ''}`}>
                 <td className="px-2 py-3 text-center">
                   <button 
@@ -183,19 +186,21 @@ const EditableAuditLedger: React.FC<{
                     <option value="EXPENSE">EXP</option>
                   </select>
                 </td>
+                <td className="px-2 py-3">
+                  <select 
+                    value={item.category ?? ''} 
+                    onChange={e => handleItemChange(idx, 'category', e.target.value)}
+                    className="w-full bg-transparent font-bold text-[9px] text-ypsom-deep outline-none border-b border-transparent focus:border-ypsom-deep"
+                  >
+                    <option value="">--</option>
+                    {TAX_CATEGORIES.map(cat => <option key={cat.id} value={cat.id}>{cat.label}</option>)}
+                  </select>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {visibleCount < items.length && (
-        <button 
-          onClick={loadMore}
-          className="w-full py-3 bg-gray-100 border border-ypsom-alice hover:bg-ypsom-alice text-ypsom-deep font-black text-[9px] uppercase tracking-[0.2em] rounded-sm transition-all"
-        >
-          Load More Records
-        </button>
-      )}
     </div>
   );
 };
@@ -431,15 +436,52 @@ const VerificationHub: React.FC<{
                     <label className="text-[9px] font-black uppercase text-ypsom-slate tracking-[0.2em] block mb-2">Issuer Entity</label>
                     <input value={editedData.issuer} onChange={e => handleFieldChange('issuer', e.target.value)} className="w-full h-11 px-4 bg-gray-50 border border-ypsom-alice rounded-sm text-xs font-bold outline-none focus:border-ypsom-deep transition-colors" />
                  </div>
-                 <div>
-                    <label className="text-[9px] font-black uppercase text-ypsom-slate tracking-[0.2em] block mb-2">ISO Currency</label>
-                    <input value={editedData.originalCurrency} onChange={e => handleFieldChange('originalCurrency', e.target.value)} className="w-full h-11 px-4 bg-gray-50 border border-ypsom-alice rounded-sm text-xs font-bold outline-none" />
+                 <div className="grid grid-cols-2 gap-3">
+                    <div>
+                       <label className="text-[9px] font-black uppercase text-ypsom-slate tracking-[0.2em] block mb-2">Source Currency</label>
+                       <input value={editedData.originalCurrency} onChange={e => handleFieldChange('originalCurrency', e.target.value)} className="w-full h-11 px-4 bg-gray-50 border border-ypsom-alice rounded-sm text-xs font-bold outline-none uppercase" placeholder="CHF" />
+                    </div>
+                    <div>
+                       <label className="text-[9px] font-black uppercase text-ypsom-slate tracking-[0.2em] block mb-2">Target Currency</label>
+                       <select 
+                         value={editedData.amountInCHF ? 'CHF' : editedData.originalCurrency} 
+                         onChange={async (e) => {
+                           const targetCurrency = e.target.value;
+                           const rate = await getLiveExchangeRate(editedData.originalCurrency || 'CHF', targetCurrency);
+                           handleFieldChange('amountInCHF', (editedData.totalAmount || 0) * rate);
+                           handleFieldChange('conversionRateUsed', rate);
+                         }}
+                         className="w-full h-11 px-4 bg-white border border-ypsom-alice rounded-sm text-xs font-bold outline-none uppercase"
+                       >
+                         <option value="CHF">CHF</option>
+                         <option value="EUR">EUR</option>
+                         <option value="USD">USD</option>
+                         <option value="GBP">GBP</option>
+                         <option value="JPY">JPY</option>
+                       </select>
+                    </div>
+                 </div>
+                 <div className="bg-amber-50 border border-amber-200 rounded-sm p-3">
+                    <div className="flex items-center justify-between">
+                       <span className="text-[9px] font-black uppercase text-amber-700 tracking-widest">Exchange Rate</span>
+                       <span className="text-xs font-mono font-black text-amber-900">
+                         1 {editedData.originalCurrency} = {(editedData.conversionRateUsed || 1).toFixed(4)} CHF
+                       </span>
+                    </div>
+                    <div className="mt-2 pt-2 border-t border-amber-200">
+                       <div className="flex items-center justify-between">
+                          <span className="text-[9px] font-bold uppercase text-amber-700">Converted Amount</span>
+                          <span className="text-sm font-black text-amber-900">
+                            {(editedData.amountInCHF || 0).toFixed(2)} CHF
+                          </span>
+                       </div>
+                    </div>
                  </div>
               </div>
               <div className="space-y-5">
                  <div>
                     <label className={`text-[9px] font-black uppercase tracking-[0.2em] block mb-2 flex justify-between ${isZeroValue ? 'text-red-600' : 'text-ypsom-slate'}`}>
-                       <span>Audit Gross Value {isZeroValue && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-top" />}</span>
+                       <span>Total (incl. VAT) {isZeroValue && <AlertTriangle className="w-3 h-3 inline ml-1 align-text-top" />}</span>
                        {isBatch && <button onClick={syncTotalFromSubs} className="text-[8px] text-amber-600 hover:underline flex items-center gap-1"><RefreshCcw className="w-2.5 h-2.5" /> Sync</button>}
                     </label>
                     <div className="relative">
@@ -454,6 +496,41 @@ const VerificationHub: React.FC<{
                         <div className="absolute -bottom-5 left-0 text-[8px] font-black text-red-600 uppercase tracking-widest animate-pulse">Critical Error: Fiduciary value cannot be zero</div>
                       )}
                     </div>
+                 </div>
+                 <div className="grid grid-cols-2 gap-3">
+                    <div>
+                       <label className="text-[9px] font-black uppercase text-blue-700 tracking-[0.2em] block mb-2">VAT Amount</label>
+                       <input 
+                         type="number" 
+                         step="0.01" 
+                         value={editedData.vatAmount || 0} 
+                         onChange={e => handleFieldChange('vatAmount', parseFloat(e.target.value) || 0)} 
+                         className="w-full h-11 px-4 bg-blue-50 border border-blue-200 rounded-sm text-xs font-bold outline-none focus:border-blue-400 transition-colors" 
+                       />
+                    </div>
+                    <div>
+                       <label className="text-[9px] font-black uppercase text-blue-700 tracking-[0.2em] block mb-2">VAT Rate %</label>
+                       <input 
+                         type="number" 
+                         step="0.1" 
+                         value={editedData.vatRate || 0} 
+                         onChange={e => handleFieldChange('vatRate', parseFloat(e.target.value) || 0)} 
+                         className="w-full h-11 px-4 bg-blue-50 border border-blue-200 rounded-sm text-xs font-bold outline-none focus:border-blue-400 transition-colors" 
+                         placeholder="e.g. 7.7"
+                       />
+                    </div>
+                 </div>
+              </div>
+              <div className="space-y-5 md:col-span-2 xl:col-span-1">
+                 <div>
+                    <label className="text-[9px] font-black uppercase text-green-700 tracking-[0.2em] block mb-2">Net Amount (excl. VAT)</label>
+                    <input 
+                      type="number" 
+                      step="0.01" 
+                      value={editedData.netAmount || 0} 
+                      onChange={e => handleFieldChange('netAmount', parseFloat(e.target.value) || 0)} 
+                      className="w-full h-11 px-4 bg-green-50 border border-green-200 rounded-sm text-xs font-black outline-none focus:border-green-400 transition-colors" 
+                    />
                  </div>
                  <div className="pt-1 sm:pt-0">
                     <label className="text-[9px] font-black uppercase text-ypsom-slate tracking-[0.2em] block mb-2">Categorization</label>

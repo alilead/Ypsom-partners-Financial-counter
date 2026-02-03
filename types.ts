@@ -1,3 +1,9 @@
+export interface Client {
+  id: string;
+  user_id: string;
+  name: string;
+  created_at: string;
+}
 
 export enum DocumentType {
   BANK_STATEMENT = 'Bank Statement',
